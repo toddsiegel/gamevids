@@ -5,12 +5,13 @@ A desktop app for turning full-game footage of a hockey goalie into short, watch
 ## 1. Context
 
 **Footage (measured from `~/Videos/Hockey`):**
-- Two DJI Osmo Action 5 Pro cameras, mounted low on the glass behind each net, wide lens. The scoreboard is visible in both views.
-- 1920×1080 at 119.88 fps, HEVC Main, ~55 Mbps (~25 GB per camera-hour), AAC stereo audio.
-- Recordings split into ~42-minute / 17.2 GB chapters: `DJI_<YYYYMMDDhhmmss>_<NNNN>_D.MP4`.
-- Each file carries the camera serial in its DJI metadata stream (e.g. `82JANA9MLDSCN32`) and a wall-clock `creation_time` (1-second resolution). Camera timecodes are *not* synced between cameras.
+- Two DJI Osmo Action 5 Pro cameras per game, mounted low on the glass behind each net, wide lens. The scoreboard is visible in both views. Three cameras appear across the library (`82JAP19MLEUU2N`, `82JANA9MLDSCN3`, `82JXM7P00B1QLX`), so the app can't assume a fixed pair.
+- 1920×1080 at 119.88 fps, HEVC Main, ~55 Mbps (~25 GB per camera-hour), AAC stereo audio. At least one game (2026-09-12 @ Arvada) was shot at 59.94 fps.
+- Recordings split into chapters when a file reaches 16 GiB (~42 minutes, ~17.2 GB): `DJI_<YYYYMMDDhhmmss>_<NNNN>_D.MP4`. Chapters play back-to-back with no lost frames, and the next chapter's `creation_time` lands 0.5–2.6 s after the previous one ends. `NNNN` is a per-camera file counter, not a chapter number.
+- A camera is sometimes stopped and restarted mid-game (e.g. between periods), so one camera's files can form several recordings with gaps between them.
+- Each file carries the camera serial in the header of its DJI `djmd` metadata stream (a protobuf field, e.g. `82JANA9MLDSCN3`) and a wall-clock `creation_time` (UTC, 1-second resolution). Running `strings` on the stream shows an extra trailing character, which is the next field's tag byte. Camera timecodes are *not* synced between cameras. The name given to a camera in the DJI Mimo app is not stored in the files.
 - Keyframes every ~1 s.
-- Older games were split by period and re-muxed with ffmpeg/LosslessCut. Those files have lost the serial, and the period is in the filename (`… - 1st Period.mp4`). Several games have LosslessCut projects (`*-proj.llc`) with hand-picked D-zone segments.
+- Older games were split by period with LosslessCut, and the period is in the filename (`… - 1st Period.mp4`). Most of these files kept the `djmd` stream and `creation_time`, so they still group by camera. Only the hand-cut `D Zone` exports and the occasional re-encode (2026-09-26 @ Arapahoe Maize, 1st Period) lost both. Some "period" files are really camera chapters with a period name. Several games have LosslessCut projects (`*-proj.llc`) with hand-picked D-zone segments.
 
 **Machine:** Linux, 16 threads, 30 GB RAM, AMD Radeon 860M iGPU. ffmpeg has VA-API, and hardware HEVC decode runs at ~880 fps (~7× real time). Disk is 913 GB with ~330 GB free.
 
@@ -19,7 +20,7 @@ A desktop app for turning full-game footage of a hockey goalie into short, watch
 ## 2. First version — workflow
 
 1. **Add a game.** Pick the video files (both cameras, any number of chapters).
-   - The app groups the files by camera serial and stitches each camera's chapters into one continuous timeline, ordered by `creation_time` (back-to-back chapters).
+   - The app groups the files by camera serial and stitches each camera's files into a wall-clock timeline ordered by `creation_time`. A file continues the previous one as a chapter only when the previous file hit the 16 GiB split and the next starts within 5 s. Anything else starts a new recording after a gap. `D Zone` exports are skipped, and files with no serial are assigned to a camera by hand.
    - You enter a free-text **game title**, shown on the title card (e.g. `2026-10-17 vs Lafayette`). The date is prefilled from the file metadata.
 2. **Draw the D-zone** polygon on a still frame for each camera. It's prefilled from the previous game (rinks are the same size and the cameras sit in roughly the same spot), so it usually needs only a nudge.
 3. **Extract clips.** A background scan computes a motion-activity curve inside each camera's polygon and turns it into candidate clips using **fixed** detection settings (in a config file, not the UI). You can draw the next camera's zone while the first one scans.
@@ -121,3 +122,7 @@ Each step ends with something you can run and check yourself. Steps 1–6 are co
 - Clips reference the source files, so nothing is extracted to disk until export. When raw footage is later moved by hand, the app will ask for the new location (relink).
 - Existing games will eventually be reprocessed from their full-length files, not from the `D Zone` exports.
 - Both cameras are scanned and triaged. In the first version, far-end clips you keep appear in the game video in chronological order.
+
+## 7. Possible follow-ups
+
+- **Camera names.** Show the names given to cameras in the DJI Mimo app in place of A/B/C. The files don't record the Mimo name (only the model, firmware and serial), so the app would keep its own serial-to-name list, entered once per camera and stored in the library database.
