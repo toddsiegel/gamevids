@@ -3,6 +3,7 @@
 from collections.abc import Sequence
 from datetime import datetime
 
+from gamevids.games import Game, GameSummary
 from gamevids.grouping import Chapter, FileKind, Grouping
 from gamevids.probe import MediaInfo
 
@@ -48,7 +49,8 @@ def table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> list[str]:
     ]
 
 
-def format_grouping(grouping: Grouping) -> str:
+def format_grouping(grouping: Grouping, heading: list[str] | None = None) -> str:
+    """One row per file, then a key to the cameras. `heading` replaces the date line."""
     rows = []
     for camera in grouping.cameras:
         for i, recording in enumerate(camera.recordings):
@@ -64,9 +66,9 @@ def format_grouping(grouping: Grouping) -> str:
     for info in grouping.exports:
         rows.append(("-", "", "", hms(info.duration), "", "D-zone export, skipped", info.path.name))
 
-    lines = []
-    if grouping.date:
-        lines += [f"Date: {grouping.date.astimezone():%Y-%m-%d}", ""]
+    if heading is None:
+        heading = [f"Date: {grouping.date.astimezone():%Y-%m-%d}"] if grouping.date else []
+    lines = [*heading, ""] if heading else []
     lines += table(HEADERS, rows)
 
     if grouping.cameras:
@@ -81,3 +83,26 @@ def format_grouping(grouping: Grouping) -> str:
         lines += ["", "Warnings:"] + [f"  {w}" for w in grouping.warnings]
 
     return "\n".join(lines)
+
+
+def format_game_list(games: list[GameSummary]) -> str:
+    if not games:
+        return "No games yet. Add one with `gamevids game add`."
+    headers = ("ID", "DATE", "CAMERAS", "FILES", "FOOTAGE", "TITLE")
+    rows = [
+        (str(g.id), g.date.isoformat(), str(g.cameras), str(g.files), hms(g.footage), g.title)
+        for g in games
+    ]
+    return "\n".join(table(headers, rows))
+
+
+def format_game(game: Game) -> str:
+    folders = sorted(
+        {str(c.file.path.parent) for cam in game.grouping.cameras for c in cam.chapters}
+    )
+    heading = [f"Game {game.id}: {game.title}", f"Date: {game.date.isoformat()}"]
+    if len(folders) == 1:
+        heading.append(f"Folder: {folders[0]}")
+    else:
+        heading += ["Folders:"] + [f"  {f}" for f in folders]
+    return format_grouping(game.grouping, heading)

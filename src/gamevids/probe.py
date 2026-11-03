@@ -18,6 +18,12 @@ class ProbeError(RuntimeError):
 
 @dataclass(frozen=True)
 class MediaInfo:
+    """What probing a file tells us.
+
+    The library stores these fields, so a new field also needs a migration in
+    `db.py` and updates to `_insert_file` and `_chapter` in `games.py`.
+    """
+
     path: Path
     duration: float  # seconds
     size: int  # bytes

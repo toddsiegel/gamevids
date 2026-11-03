@@ -37,6 +37,14 @@ def make_info(
     )
 
 
+@pytest.fixture(autouse=True)
+def library(tmp_path, monkeypatch) -> Path:
+    """Point every test at its own empty library, never the real one."""
+    path = tmp_path / "data" / "library.db"
+    monkeypatch.setenv("GAMEVIDS_DB", str(path))
+    return path
+
+
 @pytest.fixture
 def make_clip(tmp_path):
     """Write a tiny H.264 clip with ffmpeg and return its path."""
