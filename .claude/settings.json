@@ -1,0 +1,38 @@
+{
+  "attribution": { "commit": "", "pr": "" },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "FILE_PATH=$(jq -r '.tool_input.file_path // empty'); case \"$FILE_PATH\" in *.rb|*.rake|Rakefile|Gemfile) echo \"Running RuboCop on $FILE_PATH\"; bundle exec rubocop -A \"$FILE_PATH\";; esac"
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(bundle:*)",
+      "Bash(find:*)",
+      "Bash(grep:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(ls:*)",
+      "Bash(npm install:*)",
+      "Bash(bin/rails db:migrate:*)",
+      "Bash(bin/rails db:schema:*)",
+      "Bash(bin/rails generate migration:*)",
+      "Bash(bin/rails routes:*)",
+      "Bash(bin/rails test:*)",
+      "Bash(bin/rails zeitwerk:check:*)",
+      "Bash(rg:*)",
+      "Bash(bin/rubocop:*)",
+      "Bash(ruby:*)"
+    ],
+    "deny": []
+  }
+}
