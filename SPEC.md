@@ -126,3 +126,6 @@ Each step ends with something you can run and check yourself. Steps 1–6 are co
 ## 7. Possible follow-ups
 
 - **Camera names.** Show the names given to cameras in the DJI Mimo app in place of A/B/C. The files don't record the Mimo name (only the model, firmware and serial), so the app would keep its own serial-to-name list, entered once per camera and stored in the library database.
+- **Interactive CLI.** Add an interactive way to use the CLI alongside the scriptable commands. Two options, not yet decided:
+  - *Prompts for missing arguments* (like `gh pr create`): e.g. `gamevids game add <folder>` shows the grouping, prefills the title from the folder name and asks about files with no serial. Commands never prompt when every flag is given or when not run in a terminal, so scripts keep working.
+  - *A full-screen TUI* as its own subcommand (`gamevids tui`, e.g. built with Textual) in a separate package, so the core stays UI-free. Note that it would overlap the Qt app's game-management screens, and video work (triage, D-zone drawing) still needs Qt.
