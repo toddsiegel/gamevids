@@ -126,14 +126,24 @@ def _insert_file(
     conn.execute(f"INSERT INTO source_file ({names}) VALUES ({placeholders})", columns)
 
 
-def list_games(conn: sqlite3.Connection) -> list[GameSummary]:
+GAME_SORTS = {"id": "g.id", "date": "g.date, g.id"}
+
+
+def list_games(
+    conn: sqlite3.Connection, sort: str = "id", descending: bool = False
+) -> list[GameSummary]:
+    """Summarise every game, ordered by `sort` (a key of `GAME_SORTS`)."""
+    if sort not in GAME_SORTS:
+        raise GameError(f"can't sort games by {sort!r}")
+    direction = " DESC" if descending else ""
+    order = ", ".join(column + direction for column in GAME_SORTS[sort].split(", "))
     rows = conn.execute(
         "SELECT g.id, g.title, g.date,"
         " COUNT(DISTINCT c.id) AS cameras, COUNT(f.id) AS files,"
         " COALESCE(SUM(f.duration), 0) AS footage"
         " FROM game g LEFT JOIN camera c ON c.game_id = g.id"
         " LEFT JOIN source_file f ON f.camera_id = c.id"
-        " GROUP BY g.id ORDER BY g.id"
+        f" GROUP BY g.id ORDER BY {order}"
     ).fetchall()
     return [
         GameSummary(

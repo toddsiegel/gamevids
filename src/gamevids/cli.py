@@ -13,6 +13,7 @@ from gamevids import __version__, db
 from gamevids.activity import ScanError, load_curve, save_curve, scan_camera
 from gamevids.frames import VideoError, still_frame
 from gamevids.games import (
+    GAME_SORTS,
     Game,
     GameError,
     add_game,
@@ -81,7 +82,7 @@ def cmd_game_add(args: argparse.Namespace) -> int:
 
 def cmd_game_list(args: argparse.Namespace) -> int:
     with _open(args) as conn:
-        print(format_game_list(list_games(conn)))
+        print(format_game_list(list_games(conn, args.sort, args.desc)))
     return 0
 
 
@@ -271,6 +272,13 @@ def build_parser() -> argparse.ArgumentParser:
     add.set_defaults(handler=cmd_game_add)
 
     listing = game_commands.add_parser("list", help="list the games in the library")
+    listing.add_argument(
+        "--sort",
+        choices=list(GAME_SORTS),
+        default="id",
+        help="order by game id or by game date (default: %(default)s)",
+    )
+    listing.add_argument("--desc", action="store_true", help="newest or highest first")
     listing.set_defaults(handler=cmd_game_list)
 
     for name, handler, text in [

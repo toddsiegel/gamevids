@@ -126,3 +126,25 @@ def test_rename_game_rejects(conn, game_id, title, game_date, message):
     add_game(conn, "t", two_camera_game())
     with pytest.raises(GameError, match=message):
         rename_game(conn, game_id, title, game_date)
+
+
+@pytest.mark.parametrize(
+    ("sort", "descending", "titles"),
+    [
+        ("id", False, ["b", "a", "c"]),
+        ("id", True, ["c", "a", "b"]),
+        ("date", False, ["a", "c", "b"]),
+        ("date", True, ["b", "c", "a"]),
+    ],
+)
+def test_list_games_sorts(conn, sort, descending, titles):
+    add_game(conn, "b", group_files([make_info("b/x.MP4")]), date(2026, 10, 25))
+    add_game(conn, "a", group_files([make_info("a/x.MP4")]), date(2026, 10, 1))
+    add_game(conn, "c", group_files([make_info("c/x.MP4")]), date(2026, 10, 1))
+
+    assert [g.title for g in list_games(conn, sort, descending)] == titles
+
+
+def test_list_games_rejects_an_unknown_sort(conn):
+    with pytest.raises(GameError, match="can't sort games by 'title'"):
+        list_games(conn, "title")

@@ -123,6 +123,25 @@ def test_game_rename(game_folder, capsys):
     assert "error: no game 2" in capsys.readouterr().err
 
 
+def test_game_list_sort_flags(game_folder, tmp_path, capsys):
+    (tmp_path / "second").mkdir()
+    for f in game_folder.iterdir():
+        (tmp_path / "second" / f.name).touch()
+    assert main(["game", "add", "--title", "first", "--date", "2026-10-24", str(game_folder)]) == 0
+    second = tmp_path / "second"
+    assert main(["game", "add", "--title", "second", "--date", "2026-10-01", str(second)]) == 0
+    capsys.readouterr()
+
+    def ids(*flags):
+        assert main(["game", "list", *flags]) == 0
+        return [line.split()[0] for line in capsys.readouterr().out.splitlines()[1:]]
+
+    assert ids() == ["1", "2"]
+    assert ids("--desc") == ["2", "1"]
+    assert ids("--sort", "date") == ["2", "1"]
+    assert ids("--sort", "date", "--desc") == ["1", "2"]
+
+
 def test_game_add_refuses_files_without_a_serial_unless_told(game_folder, monkeypatch, capsys):
     (game_folder / "2nd Period.mp4").touch()
     unplaced = make_info("x", serial=None)
