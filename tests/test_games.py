@@ -69,11 +69,11 @@ def test_add_game_rejects(conn, title, files, message):
         add_game(conn, title, group_files(files))
 
 
-def test_list_games_summarises_each_game(conn):
+def test_list_games_summarises_each_game_in_id_order(conn):
     add_game(conn, "later", two_camera_game("one"), date(2026, 10, 25))
     add_game(conn, "earlier", group_files([make_info("two/a.MP4")]), date(2026, 10, 1))
 
-    (earlier, later) = list_games(conn)
+    (later, earlier) = list_games(conn)
 
     assert (earlier.title, earlier.cameras, earlier.files) == ("earlier", 1, 1)
     assert (later.title, later.cameras, later.files) == ("later", 2, 4)

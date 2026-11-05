@@ -133,7 +133,7 @@ def list_games(conn: sqlite3.Connection) -> list[GameSummary]:
         " COALESCE(SUM(f.duration), 0) AS footage"
         " FROM game g LEFT JOIN camera c ON c.game_id = g.id"
         " LEFT JOIN source_file f ON f.camera_id = c.id"
-        " GROUP BY g.id ORDER BY g.date, g.id"
+        " GROUP BY g.id ORDER BY g.id"
     ).fetchall()
     return [
         GameSummary(
