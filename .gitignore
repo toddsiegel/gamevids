@@ -6,3 +6,6 @@ __pycache__/
 dist/
 build/
 *.egg-info/
+
+# plots written by `gamevids scan`
+game-*-activity.png
