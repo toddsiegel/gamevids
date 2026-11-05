@@ -88,9 +88,9 @@ def format_grouping(grouping: Grouping, heading: list[str] | None = None) -> str
 def format_game_list(games: list[GameSummary]) -> str:
     if not games:
         return "No games yet. Add one with `gamevids game add`."
-    headers = ("ID", "DATE", "CAMERAS", "FILES", "FOOTAGE", "TITLE")
+    headers = ("ID", "DATE", "TITLE", "CAMERAS", "FILES", "FOOTAGE")
     rows = [
-        (str(g.id), g.date.isoformat(), str(g.cameras), str(g.files), hms(g.footage), g.title)
+        (str(g.id), g.date.isoformat(), g.title, str(g.cameras), str(g.files), hms(g.footage))
         for g in games
     ]
     return "\n".join(table(headers, rows))

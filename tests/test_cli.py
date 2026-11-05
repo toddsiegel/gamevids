@@ -81,8 +81,8 @@ def test_game_add_list_show_remove(game_folder, capsys):
 
     assert main(["game", "list"]) == 0
     header, row = capsys.readouterr().out.splitlines()
-    assert header.split() == ["ID", "DATE", "CAMERAS", "FILES", "FOOTAGE", "TITLE"]
-    assert row.split() == ["1", "2026-10-24", "1", "2", "1:05:25", "vs", "Hyland", "Hills"]
+    assert header.split() == ["ID", "DATE", "TITLE", "CAMERAS", "FILES", "FOOTAGE"]
+    assert row.split() == ["1", "2026-10-24", "vs", "Hyland", "Hills", "1", "2", "1:05:25"]
 
     assert main(["game", "show", "1"]) == 0
     lines = capsys.readouterr().out.splitlines()
