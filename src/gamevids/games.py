@@ -203,3 +203,25 @@ def remove_game(conn: sqlite3.Connection, game_id: int) -> None:
     with conn:
         if conn.execute("DELETE FROM game WHERE id = ?", (game_id,)).rowcount == 0:
             raise GameError(f"no game {game_id}")
+
+
+def rename_game(
+    conn: sqlite3.Connection,
+    game_id: int,
+    title: str | None = None,
+    game_date: date | None = None,
+) -> None:
+    """Change a game's title, its date, or both. Whatever is left as None is kept."""
+    if title is None and game_date is None:
+        raise GameError("give a new title, a new date, or both")
+    if title is not None:
+        title = title.strip()
+        if not title:
+            raise GameError("the game needs a title")
+    with conn:
+        changed = conn.execute(
+            "UPDATE game SET title = COALESCE(?, title), date = COALESCE(?, date) WHERE id = ?",
+            (title, game_date.isoformat() if game_date else None, game_id),
+        ).rowcount
+        if changed == 0:
+            raise GameError(f"no game {game_id}")

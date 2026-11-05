@@ -12,7 +12,15 @@ from pathlib import Path
 from gamevids import __version__, db
 from gamevids.activity import ScanError, load_curve, save_curve, scan_camera
 from gamevids.frames import VideoError, still_frame
-from gamevids.games import Game, GameError, add_game, list_games, load_game, remove_game
+from gamevids.games import (
+    Game,
+    GameError,
+    add_game,
+    list_games,
+    load_game,
+    remove_game,
+    rename_game,
+)
 from gamevids.grouping import Grouping, group_files
 from gamevids.plot import CameraPanel, plot_activity
 from gamevids.probe import ProbeError, find_videos, probe_file
@@ -88,6 +96,22 @@ def cmd_game_remove(args: argparse.Namespace) -> int:
         title = load_game(conn, args.game).title
         remove_game(conn, args.game)
     print(f"Removed game {args.game} ({title}). Its video files were not touched.")
+    return 0
+
+
+def cmd_game_rename(args: argparse.Namespace) -> int:
+    if args.title is None and args.date is None:
+        raise CommandError("Give a new title, a new --date, or both.")
+    with _open(args) as conn:
+        before = load_game(conn, args.game)
+        rename_game(conn, args.game, args.title, args.date)
+        after = load_game(conn, args.game)
+    if after.title != before.title:
+        print(f"Title: {before.title} -> {after.title}")
+    if after.date != before.date:
+        print(f"Date: {before.date.isoformat()} -> {after.date.isoformat()}")
+    if (after.title, after.date) == (before.title, before.date):
+        print(f"Game {args.game} already has that title and date.")
     return 0
 
 
@@ -224,7 +248,7 @@ def build_parser() -> argparse.ArgumentParser:
     probe.add_argument("paths", nargs="+", type=Path, help="video files or a game folder")
     probe.set_defaults(handler=cmd_probe)
 
-    game = commands.add_parser("game", help="add, list, show and remove games")
+    game = commands.add_parser("game", help="add, list, show, rename and remove games")
     game_commands = game.add_subparsers(dest="game_command", metavar="<action>", required=True)
 
     add = game_commands.add_parser(
@@ -256,6 +280,17 @@ def build_parser() -> argparse.ArgumentParser:
         sub = game_commands.add_parser(name, help=text)
         sub.add_argument("game", type=int, help="game id, from `gamevids game list`")
         sub.set_defaults(handler=handler)
+
+    rename = game_commands.add_parser(
+        "rename",
+        help="change a game's title or date",
+        description="Change a game's title, its date, or both. Leave out the title to "
+        "change only the date.",
+    )
+    rename.add_argument("game", type=int, help="game id, from `gamevids game list`")
+    rename.add_argument("title", nargs="?", help="the new title")
+    rename.add_argument("--date", type=date.fromisoformat, help="new game date as YYYY-MM-DD")
+    rename.set_defaults(handler=cmd_game_rename)
 
     scan = commands.add_parser(
         "scan",

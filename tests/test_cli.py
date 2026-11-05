@@ -98,6 +98,31 @@ def test_game_add_list_show_remove(game_folder, capsys):
     assert "error: no game 1" in capsys.readouterr().err
 
 
+def test_game_rename(game_folder, capsys):
+    assert main(["game", "add", "--title", "t", str(game_folder)]) == 0
+    capsys.readouterr()
+
+    assert main(["game", "rename", "1", "vs Hyland Hills"]) == 0
+    assert capsys.readouterr().out == "Title: t -> vs Hyland Hills\n"
+
+    assert main(["game", "rename", "1", "--date", "2026-10-25"]) == 0
+    assert capsys.readouterr().out == "Date: 2026-10-24 -> 2026-10-25\n"
+
+    assert main(["game", "rename", "1", "@ Arvada", "--date", "2026-09-12"]) == 0
+    assert capsys.readouterr().out == (
+        "Title: vs Hyland Hills -> @ Arvada\nDate: 2026-10-25 -> 2026-09-12\n"
+    )
+
+    assert main(["game", "rename", "1", "@ Arvada"]) == 0
+    assert "already has that title and date" in capsys.readouterr().out
+
+    assert main(["game", "rename", "1"]) == 1
+    assert "a new title, a new --date, or both" in capsys.readouterr().err
+
+    assert main(["game", "rename", "2", "x"]) == 1
+    assert "error: no game 2" in capsys.readouterr().err
+
+
 def test_game_add_refuses_files_without_a_serial_unless_told(game_folder, monkeypatch, capsys):
     (game_folder / "2nd Period.mp4").touch()
     unplaced = make_info("x", serial=None)

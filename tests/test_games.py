@@ -4,7 +4,7 @@ import pytest
 from conftest import FULL_CHAPTER, GAME_START, make_info
 
 from gamevids import db
-from gamevids.games import GameError, add_game, list_games, load_game, remove_game
+from gamevids.games import GameError, add_game, list_games, load_game, remove_game, rename_game
 from gamevids.grouping import group_files
 
 
@@ -90,3 +90,39 @@ def test_remove_game(conn):
         load_game(conn, game_id)
     with pytest.raises(GameError, match="no game 1"):
         remove_game(conn, game_id)
+
+
+def test_rename_game_changes_the_title_the_date_or_both(conn):
+    game_id = add_game(conn, "t", two_camera_game(), date(2026, 10, 24))
+
+    rename_game(conn, game_id, "  vs Lafayette ")
+    assert (load_game(conn, game_id).title, load_game(conn, game_id).date) == (
+        "vs Lafayette",
+        date(2026, 10, 24),
+    )
+
+    rename_game(conn, game_id, game_date=date(2026, 10, 25))
+    assert (load_game(conn, game_id).title, load_game(conn, game_id).date) == (
+        "vs Lafayette",
+        date(2026, 10, 25),
+    )
+
+    rename_game(conn, game_id, "@ Arvada", date(2026, 9, 12))
+    assert (load_game(conn, game_id).title, load_game(conn, game_id).date) == (
+        "@ Arvada",
+        date(2026, 9, 12),
+    )
+
+
+@pytest.mark.parametrize(
+    ("game_id", "title", "game_date", "message"),
+    [
+        (1, None, None, "a new title, a new date, or both"),
+        (1, "  ", None, "needs a title"),
+        (2, "t", None, "no game 2"),
+    ],
+)
+def test_rename_game_rejects(conn, game_id, title, game_date, message):
+    add_game(conn, "t", two_camera_game())
+    with pytest.raises(GameError, match=message):
+        rename_game(conn, game_id, title, game_date)
