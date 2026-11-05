@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import numpy as np
 import pytest
-from conftest import FULL_CHAPTER, GAME_START, make_info
+from conftest import FULL_CHAPTER, GAME, GAME_START, make_info, make_play_curve
 
 import gamevids.cli
 from gamevids import __version__, db
@@ -321,3 +321,134 @@ def test_detect_refuses_a_bad_config(scanned_game, capsys):
 
     assert main(["--config", str(config), "detect", "1"]) == 1
     assert "detect.threshold must be between 0 and 1" in capsys.readouterr().err
+
+
+def test_periods_needs_a_scan(clip_game, capsys):
+    assert main(["periods", "1"]) == 1
+    assert "Camera A hasn't been scanned yet. Run `gamevids scan 1 --camera A` first." in (
+        capsys.readouterr().err
+    )
+
+
+@pytest.fixture
+def two_camera_game(tmp_path, monkeypatch, library, denver, capsys):
+    """Game 1: cameras A and B each filming the 3,200 s synthetic GAME, scanned."""
+    monkeypatch.chdir(tmp_path)
+    folder = tmp_path / "game"
+    folder.mkdir()
+    infos = {
+        "DJI_20261024115345_0001_D.MP4": make_info("x", duration=3200),
+        "DJI_20261024115345_0002_D.MP4": make_info("x", duration=3200, serial="CAMB"),
+    }
+    for name in infos:
+        (folder / name).touch()
+    monkeypatch.setattr("gamevids.cli.probe_file", lambda p: replace(infos[p.name], path=p))
+    monkeypatch.setattr("gamevids.cli.still_frame", lambda *a: np.zeros((36, 64, 3), np.uint8))
+    assert main(["game", "add", "--title", "vs Hyland Hills", str(folder)]) == 0
+    conn = db.connect(library)
+    save_curve(conn, 1, make_play_curve(0, GAME))
+    save_curve(conn, 2, make_play_curve(1, GAME))
+    capsys.readouterr()
+    return conn
+
+
+def test_periods_are_proposed_saved_and_shown(two_camera_game, tmp_path, capsys):
+    conn = two_camera_game
+
+    assert main(["periods", "1"]) == 0
+
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[:2] == [
+        "Settings (defaults): quiet below 1.5% for 30 s, periods at least 0:08:00, "
+        "warmup above 2% for 60 s",
+        "Warmup until 11:57:47.",
+    ]
+    assert lines[3].split() == ["PERIOD", "START", "LENGTH", "GOALIE", "CLIPS", "NOTE"]
+    assert lines[4:7] == [
+        "P1      11:58:35  0:16:30  -              quiet 11:57:48-11:58:45 (0:00:57)",
+        "P2      12:15:05  0:16:40  -              quiet 12:13:48-12:15:15 (0:01:27)",
+        "P3      12:31:45  0:15:21  -              quiet 12:30:18-12:31:55 (0:01:37)",
+    ]
+    assert lines[8:] == [
+        "The footage ends at 12:47:06.",
+        "",
+        "Other quiet spells, longest first:",
+        "  12:22:08-12:23:05  0:00:57",
+        "",
+        "Move a start with --start P2=HH:MM:SS.",
+        "Choose the camera behind our goalie's net in P1 with --goalie CAM; "
+        "later periods alternate ends.",
+        "Wrote game-1-activity.png",
+    ]
+    assert (tmp_path / "game-1-activity.png").exists()
+    assert conn.execute("SELECT COUNT(*) FROM period").fetchone()[0] == 3
+
+    # The saved periods are shown as they are, not proposed again.
+    assert main(["periods", "1", "--goalie", "b"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].split()[:4] == ["PERIOD", "START", "LENGTH", "GOALIE"]
+    assert [line.split()[3] for line in lines[1:4]] == ["B", "A", "B"]
+    assert lines[-1] == "Wrote game-1-activity.png"
+
+
+def test_periods_can_be_moved_by_hand_and_only_replaced_when_forced(two_camera_game, capsys):
+    conn = two_camera_game
+    assert main(["periods", "1", "--goalie", "A", "--goalie", "P3=A"]) == 0
+    capsys.readouterr()
+
+    assert main(["periods", "1", "--start", "p2=12:16", "--start", "OT=12:45:00"]) == 0
+    rows = capsys.readouterr().out.splitlines()[1:5]
+    assert [r.split()[:4] for r in rows] == [
+        ["P1", "11:58:35", "0:17:25", "A"],
+        ["P2", "12:16:00", "0:15:45", "B"],
+        ["P3", "12:31:45", "0:13:15", "A"],
+        ["OT", "12:45:00", "0:02:06", "B"],
+    ]
+    assert rows[1].endswith("set by hand") and rows[3].endswith("set by hand")
+
+    assert main(["periods", "1", "--propose"]) == 1
+    err = capsys.readouterr().err
+    assert "P2 and OT's start was set by hand" in err
+    assert "Pass --force" in err
+
+    assert main(["periods", "1", "--propose", "--force"]) == 0
+    out = capsys.readouterr().out
+    assert "Only 3 of 4 periods fit between quiet spells; add the rest with --start." in out
+    starts = [r[0] for r in conn.execute("SELECT start FROM period ORDER BY number")]
+    assert len(starts) == 3 and "18:16:00" not in starts[1]
+    goalies = conn.execute("SELECT goalie_camera_id FROM period ORDER BY number").fetchall()
+    assert [g[0] for g in goalies] == [1, 2, 1]
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (["--start", "2=13:30"], "error: 13:30 is outside the game's footage (11:53:46-12:47:06)"),
+        (["--start", "2=11:50"], "error: 11:50 is outside the game's footage"),
+        (["--start", "3=12:00"], "error: P3 must start after P2 (12:15:05)"),
+        (["--start", "5=12:45"], "error: can't set OT2's start"),
+        (["--goalie", "C"], "error: game 1 has no camera C (it has A, B)"),
+        (["--goalie", "OT=A"], "error: the game has no OT"),
+    ],
+)
+def test_periods_refuses_bad_changes(two_camera_game, capsys, args, message):
+    assert main(["periods", "1"]) == 0
+    capsys.readouterr()
+
+    assert main(["periods", "1", *args]) == 1
+    assert message in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("value", ["12:00", "X=12:00"])
+def test_periods_rejects_a_malformed_start(two_camera_game, capsys, value):
+    with pytest.raises(SystemExit):
+        main(["periods", "1", "--start", value])
+    assert "--start" in capsys.readouterr().err
+
+
+def test_periods_can_be_laid_out_by_hand_without_a_scan(clip_game, library, denver, capsys):
+    assert main(["periods", "1", "--start", "1=11:53:46", "--goalie", "A"]) == 0
+
+    out = capsys.readouterr().out
+    assert out.splitlines()[1].split()[:4] == ["P1", "11:53:46", "0:00:02", "A"]
+    assert "Move a start" not in out

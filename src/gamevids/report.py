@@ -6,6 +6,7 @@ from datetime import datetime
 from gamevids.detect import Clip, DetectSettings
 from gamevids.games import Game, GameSummary
 from gamevids.grouping import Chapter, FileKind, Grouping
+from gamevids.periods import Period, PeriodSettings, Proposal
 from gamevids.probe import MediaInfo
 
 HEADERS = ("CAM", "START", "END", "LENGTH", "PERIOD", "NOTE", "FILE")
@@ -161,3 +162,71 @@ def format_clips(game: Game, clips: dict[str, list[Clip]], triage_speed: float =
         lines.append(f"Total: {_count(len(ordered), 'clip')}, {hms(total)}")
     lines.append(f"About {hms(total / triage_speed)} to watch at {triage_speed:g}x.")
     return "\n".join(lines)
+
+
+def format_periods(
+    game: Game,
+    periods: list[Period],
+    clips: dict[str, list[Clip]],
+    proposal: Proposal | None,
+) -> str:
+    """One row per period with its length, our goalie's camera and clip count.
+
+    `proposal` explains where each start came from and lists the quiet spells
+    left unused, which are the likeliest places a missed break hides.
+    """
+    if not periods:
+        return "No periods yet."
+    labels = {camera_id: label for label, camera_id in game.camera_ids.items()}
+    footage_end = max(c.end for c in game.grouping.cameras)
+    starts = [p.start for p in periods]
+    ends = [*starts[1:], footage_end]
+    all_clips = [clip for cam_clips in clips.values() for clip in cam_clips]
+
+    rows = []
+    for period, end in zip(periods, ends, strict=True):
+        if period.moved:
+            note = "set by hand"
+        elif proposal and (spell := proposal.spell_at(period.start)):
+            note = f"quiet {clock(spell.start)}-{clock(spell.end)} ({hms(spell.duration)})"
+        elif proposal and period.start == proposal.warmup_end:
+            note = "at the end of the warmup"
+        elif proposal and period.start == proposal.footage_start:
+            note = "at the start of the footage"
+        else:
+            note = ""
+        goalie = labels.get(period.goalie_camera_id, "-")
+        inside = sum(period.start <= c.start < end for c in all_clips)
+        count = str(inside) if clips else ""
+        length = hms((end - period.start).total_seconds())
+        rows.append((period.name, clock(period.start), length, goalie, count, note))
+    lines = table(("PERIOD", "START", "LENGTH", "GOALIE", "CLIPS", "NOTE"), rows)
+
+    lines.append("")
+    early = sum(c.start < starts[0] for c in all_clips)
+    if early:
+        lines.append(f"{_count(early, 'clip')} start before P1, in the warmup.")
+    lines.append(f"The footage ends at {clock(footage_end)}.")
+
+    if proposal:
+        others = sorted(
+            (
+                s
+                for s in proposal.quiet
+                if s.end < proposal.footage_end and not any(s.start <= t <= s.end for t in starts)
+            ),
+            key=lambda s: s.duration,
+            reverse=True,
+        )[:5]
+        if others:
+            lines += ["", "Other quiet spells, longest first:"]
+            lines += [f"  {clock(s.start)}-{clock(s.end)}  {hms(s.duration)}" for s in others]
+    return "\n".join(lines)
+
+
+def format_period_settings(settings: PeriodSettings) -> str:
+    return (
+        f"quiet below {settings.quiet_level * 100:g}% for {_seconds(settings.min_quiet)}, "
+        f"periods at least {hms(settings.min_period)}, "
+        f"warmup above {settings.warmup_level * 100:g}% for {_seconds(settings.min_warmup)}"
+    )

@@ -101,6 +101,18 @@ MIGRATIONS = [
 
     CREATE INDEX clip_by_camera ON clip (camera_id, start);
     """,
+    # 4: periods and which end our goalie is at
+    """
+    CREATE TABLE period (
+        game_id INTEGER NOT NULL REFERENCES game(id) ON DELETE CASCADE,
+        number INTEGER NOT NULL CHECK (number >= 1),  -- 1, 2, 3, then 4 for overtime, ...
+        start TEXT NOT NULL,  -- wall clock
+        -- the camera behind our goalie's net; NULL if not chosen or that end isn't filmed
+        goalie_camera_id INTEGER REFERENCES camera(id) ON DELETE SET NULL,
+        moved INTEGER NOT NULL DEFAULT 0,  -- 1 when the start was set by hand, not proposed
+        PRIMARY KEY (game_id, number)
+    );
+    """,
 ]
 
 

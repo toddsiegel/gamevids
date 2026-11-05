@@ -1,7 +1,7 @@
 """Settings read from `config.toml`, for tuning without changing code.
 
 The file is optional, and so is every key in it; anything left out keeps its
-default. For now it holds only the clip detection settings:
+default. It has a section for clip detection and one for period proposals:
 
     [detect]
     threshold = 0.04     # fraction of the D-zone moving
@@ -10,6 +10,19 @@ default. For now it holds only the clip detection settings:
     merge_gap = 4.0      # seconds
     pad_before = 3.0     # seconds
     pad_after = 2.0      # seconds
+
+    [periods]
+    smoothing = 5.0          # seconds
+    quiet_level = 0.015      # fraction of every D-zone moving
+    merge_gap = 15.0         # seconds
+    blip_level = 0.04        # fraction of any D-zone moving
+    min_quiet = 30.0         # seconds
+    lead = 10.0              # seconds
+    min_period = 480.0       # seconds
+    evenness = 0.25          # seconds of quiet per second of spread
+    warmup_level = 0.02      # fraction of every D-zone moving
+    warmup_window = 30.0     # seconds
+    min_warmup = 60.0        # seconds
 """
 
 import os
@@ -18,8 +31,10 @@ from dataclasses import dataclass, field, fields
 from pathlib import Path
 
 from gamevids.detect import DetectError, DetectSettings
+from gamevids.periods import PeriodError, PeriodSettings
 
 CONFIG_ENV = "GAMEVIDS_CONFIG"
+SECTIONS = {"detect": DetectSettings, "periods": PeriodSettings}
 
 
 class ConfigError(RuntimeError):
@@ -29,6 +44,7 @@ class ConfigError(RuntimeError):
 @dataclass(frozen=True)
 class Config:
     detect: DetectSettings = field(default_factory=DetectSettings)
+    periods: PeriodSettings = field(default_factory=PeriodSettings)
     path: Path | None = None  # the file it came from, if there was one
 
 
@@ -50,20 +66,22 @@ def load_config(path: Path) -> Config:
     except (OSError, tomllib.TOMLDecodeError) as e:
         raise ConfigError(f"can't read {path}: {e}") from None
 
-    unknown = sorted(set(data) - {"detect"})
+    unknown = sorted(set(data) - set(SECTIONS))
     if unknown:
         raise ConfigError(f"{path}: unknown section [{unknown[0]}]")
-    detect = data.get("detect", {})
-    if not isinstance(detect, dict):
-        raise ConfigError(f"{path}: detect must be a [detect] section")
-    known = {f.name for f in fields(DetectSettings)}
-    unknown = sorted(set(detect) - known)
-    if unknown:
-        raise ConfigError(
-            f"{path}: unknown setting detect.{unknown[0]} (known: {', '.join(sorted(known))})"
-        )
-    try:
-        settings = DetectSettings(**detect)
-    except DetectError as e:
-        raise ConfigError(f"{path}: detect.{e}") from None
-    return Config(detect=settings, path=path)
+    sections = {}
+    for name, settings_class in SECTIONS.items():
+        values = data.get(name, {})
+        if not isinstance(values, dict):
+            raise ConfigError(f"{path}: {name} must be a [{name}] section")
+        known = {f.name for f in fields(settings_class)}
+        unknown = sorted(set(values) - known)
+        if unknown:
+            raise ConfigError(
+                f"{path}: unknown setting {name}.{unknown[0]} (known: {', '.join(sorted(known))})"
+            )
+        try:
+            sections[name] = settings_class(**values)
+        except (DetectError, PeriodError) as e:
+            raise ConfigError(f"{path}: {name}.{e}") from None
+    return Config(**sections, path=path)

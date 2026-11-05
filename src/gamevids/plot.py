@@ -21,7 +21,15 @@ INK_2 = "#52514e"
 MUTED = "#898781"
 GRID = "#e1e0d9"
 CLIP = "#f0a830"
+GOALIE = "#1f9d55"
 SMOOTHING = 5.0  # seconds averaged for the dark line when there are no clips
+
+
+@dataclass(frozen=True)
+class PeriodMark:
+    name: str  # P1, P2, ..., OT
+    start: datetime
+    goalie: str | None  # label of the camera behind our goalie's net
 
 
 @dataclass
@@ -66,6 +74,28 @@ def _draw_still(ax, panel: CameraPanel) -> None:
     ax.grid(color="black", alpha=0.3, lw=0.5)
     ax.set_xlim(0, 1)
     ax.set_ylim(1, 0)
+
+
+def _draw_periods(ax, panel: CameraPanel, periods: list[PeriodMark], end: datetime) -> None:
+    """A line at each period start, and a green strip over periods with our goalie at this end."""
+    ends = [p.start for p in periods[1:]] + [end]
+    top = ax.get_xaxis_transform()  # x in data, y as a fraction of the axes
+    for period, period_end in zip(periods, ends, strict=True):
+        ours = period.goalie == panel.camera.label
+        ax.axvline(_num(period.start), color=INK, lw=1.25)
+        if ours:
+            ax.axvspan(_num(period.start), _num(period_end), ymin=0.95, color=GOALIE, lw=0)
+        label = f" {period.name}" + (" goalie" if ours else "")
+        ax.text(
+            _num(period.start),
+            0.92,
+            label,
+            transform=top,
+            va="top",
+            color=GOALIE if ours else INK,
+            fontsize=9,
+            fontweight="bold" if ours else "normal",
+        )
 
 
 def _draw_curve(ax, panel: CameraPanel, tz) -> None:
@@ -118,12 +148,16 @@ def _draw_curve(ax, panel: CameraPanel, tz) -> None:
         ax.spines[side].set_color(GRID)
 
 
-def plot_activity(title: str, panels: list[CameraPanel], out: Path) -> None:
+def plot_activity(
+    title: str, panels: list[CameraPanel], out: Path, periods: list[PeriodMark] | None = None
+) -> None:
     """Write one row per camera: its still with the zone, then its activity over time.
 
     Grey bands mark gaps between recordings, dotted lines chapter splits, and
-    orange bands detected clips, with the detection threshold dashed. The
-    still's axes run 0-1 so zone corners can be read straight off it.
+    orange bands detected clips, with the detection threshold dashed. Solid
+    lines mark period starts, with a green strip along the top of the camera
+    behind our goalie's net. The still's axes run 0-1 so zone corners can be
+    read straight off it.
     """
     start = min(p.camera.start for p in panels)
     # The local offset when the game was played, which may differ from today's (DST).
@@ -142,6 +176,8 @@ def plot_activity(title: str, panels: list[CameraPanel], out: Path) -> None:
         ax.set_facecolor(SURFACE)
         shared = shared or ax
         _draw_curve(ax, panel, tz)
+        if periods:
+            _draw_periods(ax, panel, periods, max(p.camera.end for p in panels))
         ax.set_xlim(_num(start), _num(end))
 
     out.parent.mkdir(parents=True, exist_ok=True)

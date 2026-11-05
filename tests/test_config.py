@@ -3,6 +3,7 @@ import pytest
 from gamevids import config
 from gamevids.config import Config, ConfigError, load_config
 from gamevids.detect import DetectSettings
+from gamevids.periods import PeriodSettings
 
 
 def test_a_missing_file_gives_the_defaults(tmp_path):
@@ -11,11 +12,12 @@ def test_a_missing_file_gives_the_defaults(tmp_path):
 
 def test_settings_left_out_keep_their_defaults(tmp_path):
     path = tmp_path / "config.toml"
-    path.write_text("[detect]\nthreshold = 0.05\nmerge_gap = 6\n")
+    path.write_text("[detect]\nthreshold = 0.05\nmerge_gap = 6\n[periods]\nmin_period = 600\n")
 
     loaded = load_config(path)
 
     assert loaded.detect == DetectSettings(threshold=0.05, merge_gap=6)
+    assert loaded.periods == PeriodSettings(min_period=600)
     assert loaded.path == path
 
 
@@ -28,6 +30,8 @@ def test_settings_left_out_keep_their_defaults(tmp_path):
         ("[detect]\nthreshold = 5\n", "detect.threshold must be between 0 and 1"),
         ("[detect]\npad_before = '3'\n", "detect.pad_before must be a number"),
         ("[detect\n", "can't read"),
+        ("[periods]\nmin_quiet = -1\n", "periods.min_quiet can't be negative"),
+        ("[periods]\nwarmup = 60\n", "unknown setting periods.warmup"),
     ],
 )
 def test_bad_files_are_refused(tmp_path, text, message):

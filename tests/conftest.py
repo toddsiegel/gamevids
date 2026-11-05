@@ -1,11 +1,14 @@
 import shutil
 import subprocess
+import time
 from datetime import UTC, datetime, timedelta
 from fractions import Fraction
 from pathlib import Path
 
+import numpy as np
 import pytest
 
+from gamevids.activity import ActivityCurve, ScanSettings
 from gamevids.grouping import CHAPTER_SPLIT_BYTES
 from gamevids.probe import MediaInfo
 
@@ -35,6 +38,63 @@ def make_info(
         encoder="DJI OsmoAction5 Pro",
         serial=serial,
     )
+
+
+PLAY_RATE = 10.0
+QUIET, BUSY = 0.002, 0.05
+
+# A 3-period game in seconds from GAME_START: warmup, a pregame lull, then
+# 15-minute periods split by 90 s and 100 s breaks, with a 60 s stoppage in P2.
+GAME = [
+    (0, 240, "warmup"),
+    (240, 300, "quiet"),
+    (300, 1200, "play"),
+    (1200, 1290, "quiet"),
+    (1290, 1700, "play"),
+    (1700, 1760, "quiet"),
+    (1760, 2190, "play"),
+    (2190, 2290, "quiet"),
+    (2290, 3200, "play"),
+]
+
+
+def make_play_curve(camera: int, script, *, offset: float = 0.0) -> ActivityCurve:
+    """Camera `camera`'s curve for `script`, starting `offset` seconds into it.
+
+    Kinds: "warmup" keeps every zone busy, "play" keeps one zone busy at a
+    time (the ends take turns every 10 s), "quiet" keeps every zone quiet,
+    and "off" means the camera wasn't recording.
+    """
+    end = script[-1][1]
+    times = offset + np.arange(round((end - offset) * PLAY_RATE)) / PLAY_RATE
+    values = np.full(len(times), QUIET, dtype=np.float32)
+    for start, stop, kind in script:
+        inside = (times >= start) & (times < stop)
+        if kind == "warmup":
+            values[inside] = BUSY
+        elif kind == "play":
+            ours = (times // 10) % 2 == camera
+            values[inside & ours] = BUSY
+        elif kind == "off":
+            values[inside] = np.nan
+    return ActivityCurve(
+        GAME_START + timedelta(seconds=offset),
+        PLAY_RATE,
+        values,
+        ((0, 0), (1, 0), (1, 1), (0, 1)),
+        ScanSettings(),
+        datetime(2026, 11, 5, tzinfo=UTC),
+    )
+
+
+@pytest.fixture
+def denver(monkeypatch):
+    """Run in Denver's time zone, where GAME_START is 11:53:46."""
+    monkeypatch.setenv("TZ", "America/Denver")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
 
 
 @pytest.fixture(autouse=True)

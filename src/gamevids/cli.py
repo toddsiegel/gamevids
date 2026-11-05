@@ -25,14 +25,30 @@ from gamevids.games import (
     rename_game,
 )
 from gamevids.grouping import Grouping, group_files
-from gamevids.plot import CameraPanel, plot_activity
+from gamevids.periods import (
+    DEFAULT_COUNT,
+    PeriodError,
+    load_periods,
+    move_start,
+    parse_period,
+    periods_from_proposal,
+    propose_periods,
+    resolve_clock,
+    save_periods,
+    set_goalie,
+    set_goalie_for,
+)
+from gamevids.plot import CameraPanel, PeriodMark, plot_activity
 from gamevids.probe import ProbeError, find_videos, probe_file
 from gamevids.report import (
+    clock,
     format_clips,
     format_detect_settings,
     format_game,
     format_game_list,
     format_grouping,
+    format_period_settings,
+    format_periods,
     hms,
 )
 from gamevids.zones import ZoneError, load_zone, parse_polygon, save_zone
@@ -190,7 +206,13 @@ def _write_plot(conn: sqlite3.Connection, game: Game, path: Path) -> None:
                 clips=load_clips(conn, camera_id),
             )
         )
-    plot_activity(f"Game {game.id}: {game.title}  ({game.date.isoformat()})", panels, path)
+    labels = {camera_id: label for label, camera_id in game.camera_ids.items()}
+    marks = [
+        PeriodMark(p.name, p.start, labels.get(p.goalie_camera_id))
+        for p in load_periods(conn, game.id)
+    ]
+    title = f"Game {game.id}: {game.title}  ({game.date.isoformat()})"
+    plot_activity(title, panels, path, marks)
     print(f"Wrote {path}")
 
 
@@ -277,16 +299,112 @@ def cmd_detect(args: argparse.Namespace) -> int:
             camera_id = game.camera_ids[label]
             save_clips(conn, camera_id, segments, settings, curve, replace_triaged=True)
 
-        clips = {}
-        for camera in game.grouping.cameras:
-            if load_detection(conn, game.camera_ids[camera.label]) is not None:
-                clips[camera.label] = load_clips(conn, game.camera_ids[camera.label])
+        clips = _detected_clips(conn, game)
         source = f"from {settings_file.path}" if settings_file.path else "defaults"
         print(f"Settings ({source}): {format_detect_settings(settings)}")
         print()
         print(format_clips(game, clips))
         _write_plot(conn, game, args.plot or Path(f"game-{game.id}-activity.png"))
     return 0
+
+
+def _detected_clips(conn: sqlite3.Connection, game: Game) -> dict:
+    """Each detected camera's clips by label; cameras never detected are left out."""
+    clips = {}
+    for camera in game.grouping.cameras:
+        camera_id = game.camera_ids[camera.label]
+        if load_detection(conn, camera_id) is not None:
+            clips[camera.label] = load_clips(conn, camera_id)
+    return clips
+
+
+def cmd_periods(args: argparse.Namespace) -> int:
+    settings_file = load_config(args.config)
+    with _open(args) as conn:
+        game = load_game(conn, args.game)
+        cameras = game.grouping.cameras
+        camera_ids = [game.camera_ids[c.label] for c in cameras]
+        footage = (min(c.start for c in cameras), max(c.end for c in cameras))
+        saved = load_periods(conn, game.id)
+        curves = {c.label: load_curve(conn, game.camera_ids[c.label]) for c in cameras}
+        unscanned = [label for label, curve in curves.items() if curve is None]
+
+        # With nothing saved, --start alone lays out periods by hand without a scan.
+        propose = args.propose or args.count is not None or not (saved or args.start)
+        if propose and unscanned:
+            raise CommandError(
+                f"Camera {unscanned[0]} hasn't been scanned yet. "
+                f"Run `gamevids scan {game.id} --camera {unscanned[0]}` first."
+            )
+        count = args.count or len(saved) or DEFAULT_COUNT
+        proposal = None
+        if not unscanned:
+            scanned = [curve for curve in curves.values() if curve is not None]
+            proposal = propose_periods(scanned, count, settings_file.periods)
+
+        periods = saved
+        if propose:
+            assert proposal is not None
+            moved = [p.name for p in saved if p.moved]
+            if moved and not args.force:
+                names = " and ".join(moved)
+                raise CommandError(
+                    f"{names}'s start was set by hand, and proposing again would replace it.\n"
+                    "Pass --force to replace it anyway."
+                )
+            periods = periods_from_proposal(proposal, saved, camera_ids)
+        for number, text in args.start:
+            periods = move_start(periods, number, resolve_clock(text, footage), footage, camera_ids)
+        for spec in args.goalie:
+            name, _, label = spec.rpartition("=")
+            camera_id = game.camera_ids[game.camera(label).label]
+            if name:
+                periods = set_goalie_for(periods, parse_period(name), camera_id)
+            else:
+                periods = set_goalie(periods, camera_ids, camera_id)
+        if periods != saved:
+            save_periods(conn, game.id, periods)
+
+        if propose:
+            assert proposal is not None
+            source = f"from {settings_file.path}" if settings_file.path else "defaults"
+            print(f"Settings ({source}): {format_period_settings(settings_file.periods)}")
+            if proposal.warmup_end:
+                print(f"Warmup until {clock(proposal.warmup_end)}.")
+            else:
+                print("No warmup found, so P1 starts with the footage.")
+            if len(proposal.starts) < count:
+                print(
+                    f"Only {len(proposal.starts)} of {count} periods fit between quiet spells; "
+                    "add the rest with --start."
+                )
+            print()
+        print(format_periods(game, periods, _detected_clips(conn, game), proposal))
+
+        hints = []
+        if propose:
+            hints.append("Move a start with --start P2=HH:MM:SS.")
+        if periods and periods[0].goalie_camera_id is None:
+            hints.append(
+                "Choose the camera behind our goalie's net in P1 with --goalie CAM; "
+                "later periods alternate ends."
+            )
+        if hints:
+            print()
+            print("\n".join(hints))
+        _write_plot(conn, game, args.plot or Path(f"game-{game.id}-activity.png"))
+    return 0
+
+
+def _period_time(text: str) -> tuple[int, str]:
+    """`P2=12:15:30` as `(2, "12:15:30")`; the time is checked against the game later."""
+    name, sep, value = text.partition("=")
+    if not sep:
+        raise argparse.ArgumentTypeError(f"{text!r} needs a period and a time, e.g. P2=12:15:30")
+    try:
+        return parse_period(name), value
+    except PeriodError as e:
+        raise argparse.ArgumentTypeError(str(e)) from None
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -420,6 +538,55 @@ def build_parser() -> argparse.ArgumentParser:
     )
     detect.set_defaults(handler=cmd_detect)
 
+    periods = commands.add_parser(
+        "periods",
+        help="propose where each period starts and set our goalie's end",
+        description="Show the game's periods. The first time, or with --propose, propose "
+        "where each period starts from the quiet spells between periods on the activity "
+        "curves, and save them. Then move any start by hand with --start, and choose the "
+        "camera behind our goalie's net with --goalie. Redraws the PNG with the periods "
+        "marked. The proposal's settings come from the [periods] section of the --config "
+        "file.",
+    )
+    periods.add_argument("game", type=int, help="game id, from `gamevids game list`")
+    periods.add_argument(
+        "--propose",
+        action="store_true",
+        help="propose the starts again, replacing the saved ones (our goalie's ends are kept)",
+    )
+    periods.add_argument(
+        "--count",
+        type=int,
+        help=f"propose this many periods, e.g. 4 with overtime (default: as saved, else "
+        f"{DEFAULT_COUNT})",
+    )
+    periods.add_argument(
+        "--force",
+        action="store_true",
+        help="propose again even when a start was set by hand (that start is lost)",
+    )
+    periods.add_argument(
+        "--start",
+        action="append",
+        default=[],
+        type=_period_time,
+        metavar="P=TIME",
+        help="set a period's start by hand as local time, e.g. P2=12:15:30 (repeatable); "
+        "the period after the last adds one",
+    )
+    periods.add_argument(
+        "--goalie",
+        action="append",
+        default=[],
+        metavar="CAM|P=CAM",
+        help="the camera behind our goalie's net: CAM sets P1 and alternates ends after "
+        "it, P=CAM sets one period, e.g. OT=B (repeatable)",
+    )
+    periods.add_argument(
+        "--plot", type=Path, help="where to write the PNG (default: game-<id>-activity.png)"
+    )
+    periods.set_defaults(handler=cmd_periods)
+
     return parser
 
 
@@ -438,6 +605,7 @@ def main(argv: list[str] | None = None) -> int:
         GameError,
         ScanError,
         DetectError,
+        PeriodError,
         ConfigError,
         VideoError,
         ZoneError,

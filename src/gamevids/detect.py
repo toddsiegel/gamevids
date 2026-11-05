@@ -16,12 +16,13 @@ model-based detector can replace it without changing how clips are stored.
 
 import json
 import sqlite3
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 
 import numpy as np
 
 from gamevids.activity import ActivityCurve, moving_average
+from gamevids.settings import check_settings
 
 
 class DetectError(RuntimeError):
@@ -38,14 +39,7 @@ class DetectSettings:
     pad_after: float = 2.0  # seconds added after each clip
 
     def __post_init__(self) -> None:
-        for field in fields(self):
-            value = getattr(self, field.name)
-            if isinstance(value, bool) or not isinstance(value, int | float):
-                raise DetectError(f"{field.name} must be a number, not {value!r}")
-            if value < 0:
-                raise DetectError(f"{field.name} can't be negative")
-        if not 0 < self.threshold < 1:
-            raise DetectError("threshold must be between 0 and 1 (a fraction of the zone)")
+        check_settings(self, DetectError, fractions=("threshold",))
 
 
 DEFAULT_SETTINGS = DetectSettings()
