@@ -39,9 +39,10 @@ def make_info(
 
 @pytest.fixture(autouse=True)
 def library(tmp_path, monkeypatch) -> Path:
-    """Point every test at its own empty library, never the real one."""
+    """Point every test at its own empty library and no config file, never the real ones."""
     path = tmp_path / "data" / "library.db"
     monkeypatch.setenv("GAMEVIDS_DB", str(path))
+    monkeypatch.setenv("GAMEVIDS_CONFIG", str(tmp_path / "config" / "config.toml"))
     return path
 
 

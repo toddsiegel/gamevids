@@ -2,12 +2,17 @@ import subprocess
 import sys
 from dataclasses import replace
 
+import numpy as np
 import pytest
-from conftest import FULL_CHAPTER, make_info
+from conftest import FULL_CHAPTER, GAME_START, make_info
 
 import gamevids.cli
 from gamevids import __version__, db
+from gamevids.activity import ActivityCurve, ScanSettings, save_curve
 from gamevids.cli import main
+from gamevids.zones import save_zone
+
+WHOLE_FRAME = ((0, 0), (1, 0), (1, 1), (0, 1))
 
 
 def test_version_flag(capsys):
@@ -227,3 +232,92 @@ def test_scan_saves_curves_and_reuses_the_zone(clip_game, tmp_path, library, cap
     assert len(samples) == 20 * 4  # 2 s at 10 samples a second, float32
 
     assert main(["scan", "1", "--camera", "a"]) == 0
+
+
+@pytest.fixture
+def scanned_game(clip_game, library, tmp_path, monkeypatch):
+    """Game 1 with a saved 2 s curve: quiet, then 20% of the zone moving from 0.5 s to 1.5 s."""
+    monkeypatch.chdir(tmp_path)
+    conn = db.connect(library)
+    values = np.array([0.0] * 5 + [0.2] * 10 + [0.0] * 5, dtype=np.float32)
+    curve = ActivityCurve(GAME_START, 10.0, values, WHOLE_FRAME, ScanSettings(), GAME_START)
+    save_zone(conn, 1, WHOLE_FRAME)
+    save_curve(conn, 1, curve)
+    config = tmp_path / "config.toml"
+    config.write_text(
+        "[detect]\nsmoothing = 0\nmin_duration = 0.5\npad_before = 0\npad_after = 0\n"
+    )
+    return conn, config
+
+
+def test_detect_needs_a_scan(clip_game, capsys):
+    assert main(["detect", "1"]) == 1
+    assert "Camera A hasn't been scanned yet. Run `gamevids scan 1 --camera A` first." in (
+        capsys.readouterr().err
+    )
+
+
+def test_detect_lists_and_saves_clips_and_marks_them_on_the_plot(scanned_game, tmp_path, capsys):
+    conn, config = scanned_game
+
+    assert main(["--config", str(config), "detect", "1"]) == 0
+
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0] == (
+        f"Settings (from {config}): threshold 4%, smoothing 0 s, min duration 0.5 s, "
+        "merge gap 4 s, padding 0 s before and 0 s after"
+    )
+    assert lines[2].split() == ["ID", "CAM", "START", "END", "LENGTH", "PEAK"]
+    row = lines[3].split()
+    assert (row[0], row[1], row[4], row[5]) == ("1", "A", "0:00:01", "20.0%")
+    assert lines[5:] == [
+        "Camera A: 1 clip, 0:00:01 of 0:00:02 footage (50%)",
+        "About 0:00:00 to watch at 2x.",
+        "Wrote game-1-activity.png",
+    ]
+    assert (tmp_path / "game-1-activity.png").exists()
+    assert conn.execute("SELECT COUNT(*) FROM clip").fetchone()[0] == 1
+
+    # Detecting again with the defaults replaces the clip with a new one.
+    assert main(["detect", "1", "--plot", str(tmp_path / "again.png")]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].startswith("Settings (defaults): threshold 4%, smoothing 2 s,")
+    assert lines[3].split()[:2] == ["2", "A"]
+    assert conn.execute("SELECT COUNT(*) FROM clip").fetchone()[0] == 1
+
+    config.write_text("[detect]\nthreshold = 0.5\n")
+    assert main(["--config", str(config), "detect", "1"]) == 0
+    assert "No clips found." in capsys.readouterr().out
+    assert conn.execute("SELECT COUNT(*) FROM clip").fetchone()[0] == 0
+
+
+def test_detect_keeps_triaged_clips_unless_forced(scanned_game, capsys):
+    conn, config = scanned_game
+    assert main(["--config", str(config), "detect", "1"]) == 0
+    with conn:
+        conn.execute("UPDATE clip SET status = 'kept'")
+    capsys.readouterr()
+
+    assert main(["--config", str(config), "detect", "1"]) == 1
+    err = capsys.readouterr().err
+    assert "1 of camera A's clips have been triaged" in err
+    assert "Pass --force" in err
+
+    assert main(["--config", str(config), "detect", "1", "--force"]) == 0
+    assert [r[0] for r in conn.execute("SELECT status FROM clip")] == ["candidate"]
+
+
+def test_detect_warns_when_the_zone_changed_since_the_scan(scanned_game, capsys):
+    conn, config = scanned_game
+    save_zone(conn, 1, ((0, 0.5), (1, 0.5), (1, 1)))
+
+    assert main(["--config", str(config), "detect", "1"]) == 0
+    assert "camera A's zone has changed since it was scanned" in capsys.readouterr().err
+
+
+def test_detect_refuses_a_bad_config(scanned_game, capsys):
+    _, config = scanned_game
+    config.write_text("[detect]\nthreshold = 40\n")
+
+    assert main(["--config", str(config), "detect", "1"]) == 1
+    assert "detect.threshold must be between 0 and 1" in capsys.readouterr().err

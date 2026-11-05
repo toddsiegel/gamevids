@@ -77,6 +77,30 @@ MIGRATIONS = [
         scanned_at TEXT NOT NULL
     );
     """,
+    # 3: candidate clips and how they were detected
+    """
+    CREATE TABLE detection (
+        camera_id INTEGER PRIMARY KEY REFERENCES camera(id) ON DELETE CASCADE,
+        settings TEXT NOT NULL,  -- JSON detection settings
+        curve_scanned_at TEXT NOT NULL,  -- scanned_at of the curve the clips came from
+        detected_at TEXT NOT NULL
+    );
+
+    CREATE TABLE clip (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,  -- never reused, so a clip id stays unambiguous
+        camera_id INTEGER NOT NULL REFERENCES camera(id) ON DELETE CASCADE,
+        start TEXT NOT NULL,  -- wall clock, as detected
+        end TEXT NOT NULL,
+        trim_in TEXT,  -- wall clock; NULL keeps the detected start
+        trim_out TEXT,  -- wall clock; NULL keeps the detected end
+        score REAL NOT NULL,  -- detector's confidence; for motion, peak fraction of zone moving
+        status TEXT NOT NULL DEFAULT 'candidate'
+            CHECK (status IN ('candidate', 'kept', 'discarded')),
+        starred INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE INDEX clip_by_camera ON clip (camera_id, start);
+    """,
 ]
 
 

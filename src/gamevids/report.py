@@ -3,6 +3,7 @@
 from collections.abc import Sequence
 from datetime import datetime
 
+from gamevids.detect import Clip, DetectSettings
 from gamevids.games import Game, GameSummary
 from gamevids.grouping import Chapter, FileKind, Grouping
 from gamevids.probe import MediaInfo
@@ -106,3 +107,57 @@ def format_game(game: Game) -> str:
     else:
         heading += ["Folders:"] + [f"  {f}" for f in folders]
     return format_grouping(game.grouping, heading)
+
+
+def _count(n: int, noun: str) -> str:
+    return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
+
+
+def _seconds(value: float) -> str:
+    return f"{value:g} s"
+
+
+def format_detect_settings(settings: DetectSettings) -> str:
+    return (
+        f"threshold {settings.threshold * 100:g}%, smoothing {_seconds(settings.smoothing)}, "
+        f"min duration {_seconds(settings.min_duration)}, "
+        f"merge gap {_seconds(settings.merge_gap)}, "
+        f"padding {_seconds(settings.pad_before)} before and {_seconds(settings.pad_after)} after"
+    )
+
+
+def format_clips(game: Game, clips: dict[str, list[Clip]], triage_speed: float = 2.0) -> str:
+    """Every clip in time order across cameras, then a total for each camera."""
+    ordered = sorted(
+        ((label, clip) for label, cam_clips in clips.items() for clip in cam_clips),
+        key=lambda pair: (pair[1].start, pair[0]),
+    )
+    if not ordered:
+        return "No clips found."
+    headers = ("ID", "CAM", "START", "END", "LENGTH", "PEAK")
+    rows = [
+        (
+            str(clip.id),
+            label,
+            clock(clip.start),
+            clock(clip.end),
+            hms(clip.duration),
+            f"{clip.score * 100:.1f}%",
+        )
+        for label, clip in ordered
+    ]
+    lines = table(headers, rows)
+
+    lines.append("")
+    total = 0.0
+    for label, cam_clips in clips.items():
+        length = sum(c.duration for c in cam_clips)
+        total += length
+        footage = game.camera(label).duration
+        share = f" ({length / footage:.0%})" if footage else ""
+        counts = f"{_count(len(cam_clips), 'clip')}, {hms(length)} of {hms(footage)} footage"
+        lines.append(f"Camera {label}: {counts}{share}")
+    if len(clips) > 1:
+        lines.append(f"Total: {_count(len(ordered), 'clip')}, {hms(total)}")
+    lines.append(f"About {hms(total / triage_speed)} to watch at {triage_speed:g}x.")
+    return "\n".join(lines)

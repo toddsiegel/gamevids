@@ -13,7 +13,7 @@ def test_connect_creates_the_library_at_the_latest_version(tmp_path):
     assert path.exists()
     assert db.schema_version(conn) == len(db.MIGRATIONS)
     tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-    assert {"game", "camera", "source_file", "zone", "activity_curve"} <= tables
+    assert {"game", "camera", "source_file", "zone", "activity_curve", "clip"} <= tables
 
 
 def test_reopening_keeps_data_and_runs_nothing_twice(tmp_path):
@@ -52,9 +52,14 @@ def test_removing_a_game_removes_everything_under_it(tmp_path):
             "INSERT INTO activity_curve (camera_id, start, rate, samples, polygon, settings,"
             " scanned_at) VALUES (1, 's', 10, x'', '[]', '{}', 'c')"
         )
+        conn.execute(
+            "INSERT INTO detection (camera_id, settings, curve_scanned_at, detected_at)"
+            " VALUES (1, '{}', 'c', 'c')"
+        )
+        conn.execute("INSERT INTO clip (camera_id, start, end, score) VALUES (1, 's', 'e', 0.1)")
         conn.execute("DELETE FROM game")
 
-    for table in ("source_file", "zone", "activity_curve"):
+    for table in ("source_file", "zone", "activity_curve", "detection", "clip"):
         assert conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
 
 

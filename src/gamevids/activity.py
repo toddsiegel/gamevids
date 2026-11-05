@@ -58,6 +58,19 @@ class ActivityCurve:
         return self.time(len(self.values))
 
 
+def moving_average(values: np.ndarray, window: int) -> np.ndarray:
+    """Mean over `window` samples centred on each one, skipping NaNs (which stay NaN)."""
+    valid = ~np.isnan(values)
+    # np.convolve's "same" mode returns the longer input's length, so cap the window.
+    kernel = np.ones(max(1, min(window, len(values))))
+    sums = np.convolve(np.where(valid, values, 0.0), kernel, mode="same")
+    counts = np.convolve(valid.astype(float), kernel, mode="same")
+    with np.errstate(invalid="ignore", divide="ignore"):
+        out = sums / counts
+    out[~valid] = np.nan
+    return out
+
+
 def frame_activity(previous: np.ndarray, current: np.ndarray, threshold: int) -> float:
     """Fraction of pixels that changed by more than `threshold`, ignoring a uniform shift.
 

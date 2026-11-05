@@ -9,8 +9,10 @@ from contextlib import closing, contextmanager
 from datetime import date
 from pathlib import Path
 
-from gamevids import __version__, db
+from gamevids import __version__, config, db
 from gamevids.activity import ScanError, load_curve, save_curve, scan_camera
+from gamevids.config import ConfigError, load_config
+from gamevids.detect import DetectError, detect_clips, load_clips, load_detection, save_clips
 from gamevids.frames import VideoError, still_frame
 from gamevids.games import (
     GAME_SORTS,
@@ -25,7 +27,14 @@ from gamevids.games import (
 from gamevids.grouping import Grouping, group_files
 from gamevids.plot import CameraPanel, plot_activity
 from gamevids.probe import ProbeError, find_videos, probe_file
-from gamevids.report import format_game, format_game_list, format_grouping, hms
+from gamevids.report import (
+    format_clips,
+    format_detect_settings,
+    format_game,
+    format_game_list,
+    format_grouping,
+    hms,
+)
 from gamevids.zones import ZoneError, load_zone, parse_polygon, save_zone
 
 ZONE_HELP = (
@@ -152,6 +161,12 @@ class _ProgressLine:
             print(file=sys.stderr)
 
 
+def _labels(game: Game, cameras: list[str] | None) -> list[str]:
+    """The cameras named with --camera, in order and once each, else all of them."""
+    chosen = [game.camera(c).label for c in cameras or []]
+    return list(dict.fromkeys(chosen)) or [c.label for c in game.grouping.cameras]
+
+
 def _still(game: Game, label: str):
     first = game.camera(label).chapters[0]
     try:
@@ -171,6 +186,8 @@ def _write_plot(conn: sqlite3.Connection, game: Game, path: Path) -> None:
                 zone=load_zone(conn, camera_id),
                 curve=load_curve(conn, camera_id),
                 still=_still(game, camera.label),
+                detection=load_detection(conn, camera_id),
+                clips=load_clips(conn, camera_id),
             )
         )
     plot_activity(f"Game {game.id}: {game.title}  ({game.date.isoformat()})", panels, path)
@@ -187,8 +204,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
                 given[camera.label] = parse_polygon(corners)
             except ZoneError as e:
                 raise CommandError(f"camera {camera.label}'s zone: {e}") from None
-        chosen = [game.camera(c).label for c in args.camera or []]
-        labels = list(dict.fromkeys(chosen)) or [c.label for c in game.grouping.cameras]
+        labels = _labels(game, args.camera)
 
         zones = {}
         if not args.plot_only:
@@ -226,6 +242,53 @@ def cmd_scan(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_detect(args: argparse.Namespace) -> int:
+    settings_file = load_config(args.config)
+    settings = settings_file.detect
+    with _open(args) as conn:
+        game = load_game(conn, args.game)
+        labels = _labels(game, args.camera)
+        curves = {}
+        for label in labels:
+            camera_id = game.camera_ids[label]
+            curve = load_curve(conn, camera_id)
+            if curve is None:
+                raise CommandError(
+                    f"Camera {label} hasn't been scanned yet. "
+                    f"Run `gamevids scan {game.id} --camera {label}` first."
+                )
+            zone = load_zone(conn, camera_id)
+            if zone is not None and tuple(zone) != tuple(curve.polygon):
+                print(
+                    f"warning: camera {label}'s zone has changed since it was scanned; "
+                    "these clips use the old zone until you scan again.",
+                    file=sys.stderr,
+                )
+            triaged = sum(c.triaged for c in load_clips(conn, camera_id))
+            if triaged and not args.force:
+                raise CommandError(
+                    f"{triaged} of camera {label}'s clips have been triaged, and detecting "
+                    "again would replace them.\nPass --force to replace them anyway."
+                )
+            curves[label] = curve
+
+        for label, curve in curves.items():
+            segments = detect_clips(curve, settings)
+            camera_id = game.camera_ids[label]
+            save_clips(conn, camera_id, segments, settings, curve, replace_triaged=True)
+
+        clips = {}
+        for camera in game.grouping.cameras:
+            if load_detection(conn, game.camera_ids[camera.label]) is not None:
+                clips[camera.label] = load_clips(conn, game.camera_ids[camera.label])
+        source = f"from {settings_file.path}" if settings_file.path else "defaults"
+        print(f"Settings ({source}): {format_detect_settings(settings)}")
+        print()
+        print(format_clips(game, clips))
+        _write_plot(conn, game, args.plot or Path(f"game-{game.id}-activity.png"))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="gamevids",
@@ -237,6 +300,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=db.default_path(),
         help=f"library database (default: ${db.DB_ENV}, or %(default)s)",
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=config.default_path(),
+        help=f"settings file (default: ${config.CONFIG_ENV}, or %(default)s)",
     )
     commands = parser.add_subparsers(dest="command", metavar="<command>")
 
@@ -329,6 +398,28 @@ def build_parser() -> argparse.ArgumentParser:
     )
     scan.set_defaults(handler=cmd_scan)
 
+    detect = commands.add_parser(
+        "detect",
+        help="find candidate clips in the activity curves",
+        description="Turn each scanned camera's activity curve into candidate clips, replace "
+        "the camera's earlier clips with them, list every clip in the game, and redraw the "
+        "PNG with the clips marked. The settings come from the [detect] section of the "
+        "--config file; anything it leaves out keeps its default.",
+    )
+    detect.add_argument("game", type=int, help="game id, from `gamevids game list`")
+    detect.add_argument(
+        "--camera", action="append", metavar="CAM", help="detect only this camera (repeatable)"
+    )
+    detect.add_argument(
+        "--plot", type=Path, help="where to write the PNG (default: game-<id>-activity.png)"
+    )
+    detect.add_argument(
+        "--force",
+        action="store_true",
+        help="replace clips even when some have been triaged (that triage is lost)",
+    )
+    detect.set_defaults(handler=cmd_detect)
+
     return parser
 
 
@@ -346,6 +437,8 @@ def main(argv: list[str] | None = None) -> int:
         ProbeError,
         GameError,
         ScanError,
+        DetectError,
+        ConfigError,
         VideoError,
         ZoneError,
         db.DatabaseError,

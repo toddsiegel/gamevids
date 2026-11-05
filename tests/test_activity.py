@@ -14,12 +14,12 @@ from gamevids.activity import (
     ScanSettings,
     frame_activity,
     load_curve,
+    moving_average,
     save_curve,
     scan_camera,
 )
 from gamevids.frames import VideoError, gray_frames
 from gamevids.grouping import group_files
-from gamevids.plot import moving_average
 
 WHOLE_FRAME = ((0, 0), (1, 0), (1, 1), (0, 1))
 TINY = ScanSettings(rate=2, width=4, height=2)

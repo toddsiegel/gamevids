@@ -1,6 +1,6 @@
-"""A PNG of each camera's zone and activity curve, for checking a scan by eye."""
+"""A PNG of each camera's zone, activity curve and clips, for checking a scan by eye."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -9,7 +9,8 @@ from matplotlib import dates as mdates
 from matplotlib.figure import Figure
 from matplotlib.patches import Polygon as PolygonPatch
 
-from gamevids.activity import ActivityCurve
+from gamevids.activity import ActivityCurve, moving_average
+from gamevids.detect import Clip, Detection
 from gamevids.grouping import CameraGroup
 from gamevids.zones import Polygon
 
@@ -19,7 +20,8 @@ INK = "#0b0b0b"
 INK_2 = "#52514e"
 MUTED = "#898781"
 GRID = "#e1e0d9"
-SMOOTHING = 5.0  # seconds averaged for the dark line
+CLIP = "#f0a830"
+SMOOTHING = 5.0  # seconds averaged for the dark line when there are no clips
 
 
 @dataclass
@@ -28,19 +30,17 @@ class CameraPanel:
     zone: Polygon | None
     curve: ActivityCurve | None
     still: np.ndarray | None  # RGB frame from the camera
+    detection: Detection | None = None
+    clips: list[Clip] = field(default_factory=list)
 
-
-def moving_average(values: np.ndarray, window: int) -> np.ndarray:
-    """Mean over `window` samples centred on each one, skipping NaNs (which stay NaN)."""
-    valid = ~np.isnan(values)
-    # np.convolve's "same" mode returns the longer input's length, so cap the window.
-    kernel = np.ones(max(1, min(window, len(values))))
-    sums = np.convolve(np.where(valid, values, 0.0), kernel, mode="same")
-    counts = np.convolve(valid.astype(float), kernel, mode="same")
-    with np.errstate(invalid="ignore", divide="ignore"):
-        out = sums / counts
-    out[~valid] = np.nan
-    return out
+    @property
+    def fresh_clips(self) -> bool:
+        """Whether the clips were detected from the curve being drawn."""
+        return (
+            self.curve is not None
+            and self.detection is not None
+            and self.detection.curve_scanned_at == self.curve.scanned_at
+        )
 
 
 def _num(moment: datetime) -> float:
@@ -83,14 +83,27 @@ def _draw_curve(ax, panel: CameraPanel, tz) -> None:
     else:
         x = _num(curve.start) + np.arange(len(curve.values)) / curve.rate / 86400
         percent = curve.values * 100
+        smoothing = SMOOTHING
+        if panel.fresh_clips:
+            # Draw the curve the detector thresholded, under its clips.
+            assert panel.detection is not None
+            smoothing = panel.detection.settings.smoothing
+            for clip in panel.clips:
+                ax.axvspan(_num(clip.start), _num(clip.end), color=CLIP, alpha=0.3, lw=0)
+            threshold = panel.detection.settings.threshold * 100
+            ax.axhline(threshold, color=INK_2, lw=0.75, ls="--")
         ax.plot(x, percent, color=SERIES, alpha=0.25, lw=0.5)
-        window = round(SMOOTHING * curve.rate)
+        window = max(1, round(smoothing * curve.rate))
         ax.plot(x, moving_average(percent, window), color=SERIES, lw=1.5)
         top = np.nanpercentile(percent, 99.9) if np.isfinite(percent).any() else 1.0
         ax.set_ylim(0, max(1.0, top * 1.1))
         note = f"scanned {curve.scanned_at.astimezone():%Y-%m-%d %H:%M}"
         if panel.zone is not None and tuple(panel.zone) != tuple(curve.polygon):
             note += "  (zone has changed since; scan again)"
+        if panel.fresh_clips:
+            note = f"{len(panel.clips)} clips  ·  " + note
+        elif panel.detection is not None:
+            note = "clips are from an earlier scan; detect again  ·  " + note
         ax.set_title(note, loc="right", color=INK_2, fontsize=9)
 
     ax.set_ylabel("% of zone moving", color=INK_2)
@@ -108,7 +121,8 @@ def _draw_curve(ax, panel: CameraPanel, tz) -> None:
 def plot_activity(title: str, panels: list[CameraPanel], out: Path) -> None:
     """Write one row per camera: its still with the zone, then its activity over time.
 
-    Grey bands mark gaps between recordings, dotted lines chapter splits. The
+    Grey bands mark gaps between recordings, dotted lines chapter splits, and
+    orange bands detected clips, with the detection threshold dashed. The
     still's axes run 0-1 so zone corners can be read straight off it.
     """
     start = min(p.camera.start for p in panels)
