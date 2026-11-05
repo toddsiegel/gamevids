@@ -3,16 +3,26 @@
 import argparse
 import sqlite3
 import sys
+import time
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
 from datetime import date
 from pathlib import Path
 
 from gamevids import __version__, db
-from gamevids.games import GameError, add_game, list_games, load_game, remove_game
+from gamevids.activity import ScanError, load_curve, save_curve, scan_camera
+from gamevids.frames import VideoError, still_frame
+from gamevids.games import Game, GameError, add_game, list_games, load_game, remove_game
 from gamevids.grouping import Grouping, group_files
+from gamevids.plot import CameraPanel, plot_activity
 from gamevids.probe import ProbeError, find_videos, probe_file
-from gamevids.report import format_game, format_game_list, format_grouping
+from gamevids.report import format_game, format_game_list, format_grouping, hms
+from gamevids.zones import ZoneError, load_zone, parse_polygon, save_zone
+
+ZONE_HELP = (
+    'corners as "x,y x,y x,y ...", fractions of the frame from the top-left, '
+    'e.g. "0,.55 .26,.46 .74,.47 1,.58 1,1 0,1"'
+)
 
 
 class CommandError(RuntimeError):
@@ -81,6 +91,116 @@ def cmd_game_remove(args: argparse.Namespace) -> int:
     return 0
 
 
+class _ProgressLine:
+    """Shows scan progress on stderr: one updating line on a terminal, else every 10%."""
+
+    def __init__(self, label: str) -> None:
+        self.label = label
+        self.started = time.monotonic()
+        self.tty = sys.stderr.isatty()
+        self.shown_at = 0.0
+        self.next_step = 0.1
+
+    def __call__(self, done: float, total: float) -> None:
+        now = time.monotonic()
+        fraction = done / total if total else 1.0
+        if self.tty:
+            if now - self.shown_at < 0.5 and fraction < 1:
+                return
+            self.shown_at = now
+        elif fraction < self.next_step:
+            return
+        else:
+            self.next_step = int(fraction * 10 + 1) / 10
+        elapsed = now - self.started
+        speed = f", {done / elapsed:.1f}x real time" if elapsed > 1 else ""
+        text = f"Camera {self.label}: {hms(done)} of {hms(total)} ({fraction:.0%}){speed}"
+        print(
+            f"\r{text}\033[K" if self.tty else text,
+            end="" if self.tty else "\n",
+            file=sys.stderr,
+            flush=True,
+        )
+
+    def finish(self) -> None:
+        if self.tty and self.shown_at:
+            print(file=sys.stderr)
+
+
+def _still(game: Game, label: str):
+    first = game.camera(label).chapters[0]
+    try:
+        return still_frame(first.file.path, first.file.duration / 2, 640, 360)
+    except VideoError as e:
+        print(f"warning: no still for camera {label}: {e}", file=sys.stderr)
+        return None
+
+
+def _write_plot(conn: sqlite3.Connection, game: Game, path: Path) -> None:
+    panels = []
+    for camera in game.grouping.cameras:
+        camera_id = game.camera_ids[camera.label]
+        panels.append(
+            CameraPanel(
+                camera=camera,
+                zone=load_zone(conn, camera_id),
+                curve=load_curve(conn, camera_id),
+                still=_still(game, camera.label),
+            )
+        )
+    plot_activity(f"Game {game.id}: {game.title}  ({game.date.isoformat()})", panels, path)
+    print(f"Wrote {path}")
+
+
+def cmd_scan(args: argparse.Namespace) -> int:
+    with _open(args) as conn:
+        game = load_game(conn, args.game)
+        given = {}
+        for label, corners in args.zone:
+            camera = game.camera(label)
+            try:
+                given[camera.label] = parse_polygon(corners)
+            except ZoneError as e:
+                raise CommandError(f"camera {camera.label}'s zone: {e}") from None
+        chosen = [game.camera(c).label for c in args.camera or []]
+        labels = list(dict.fromkeys(chosen)) or [c.label for c in game.grouping.cameras]
+
+        zones = {}
+        if not args.plot_only:
+            for label in labels:
+                zones[label] = given.get(label) or load_zone(conn, game.camera_ids[label])
+                if zones[label] is None:
+                    raise CommandError(
+                        f"Camera {label} has no D-zone yet. Give one with --zone {label} CORNERS,\n"
+                        f"{ZONE_HELP}.\n"
+                        "Add --plot-only to draw each camera's still on a grid to read "
+                        "corners from, without scanning."
+                    )
+        for label, polygon in given.items():
+            save_zone(conn, game.camera_ids[label], polygon)
+
+        for label in [] if args.plot_only else labels:
+            camera = game.camera(label)
+            progress = _ProgressLine(label)
+            started = time.monotonic()
+            try:
+                curve = scan_camera(camera, zones[label], progress=progress)
+            except KeyboardInterrupt:
+                progress.finish()
+                print(f"Stopped. Camera {label}'s scan wasn't saved.", file=sys.stderr)
+                return 130
+            progress.finish()
+            save_curve(conn, game.camera_ids[label], curve)
+            took = time.monotonic() - started
+            print(
+                f"Camera {label}: scanned {hms(camera.duration)} of footage in {hms(took)}"
+                f" ({camera.duration / max(took, 0.001):.1f}x real time)."
+            )
+
+        _write_plot(conn, game, args.plot or Path(f"game-{game.id}-activity.png"))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="gamevids",
@@ -137,6 +257,35 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument("game", type=int, help="game id, from `gamevids game list`")
         sub.set_defaults(handler=handler)
 
+    scan = commands.add_parser(
+        "scan",
+        help="measure motion in each camera's D-zone",
+        description="Measure how much moves inside each camera's D-zone over the game, "
+        "save the activity curves, and write a PNG of them to check by eye. A zone given "
+        "with --zone is saved for the game, so later scans can leave it out.",
+    )
+    scan.add_argument("game", type=int, help="game id, from `gamevids game list`")
+    scan.add_argument(
+        "--zone",
+        nargs=2,
+        action="append",
+        default=[],
+        metavar=("CAM", "CORNERS"),
+        help=f"set a camera's D-zone: {ZONE_HELP}".replace("%", "%%"),
+    )
+    scan.add_argument(
+        "--camera", action="append", metavar="CAM", help="scan only this camera (repeatable)"
+    )
+    scan.add_argument(
+        "--plot", type=Path, help="where to write the PNG (default: game-<id>-activity.png)"
+    )
+    scan.add_argument(
+        "--plot-only",
+        action="store_true",
+        help="save any --zone and redraw the PNG without scanning",
+    )
+    scan.set_defaults(handler=cmd_scan)
+
     return parser
 
 
@@ -150,6 +299,14 @@ def main(argv: list[str] | None = None) -> int:
         return args.handler(args)
     except CommandError as e:
         print(e, file=sys.stderr)
-    except (ProbeError, GameError, db.DatabaseError, sqlite3.Error) as e:
+    except (
+        ProbeError,
+        GameError,
+        ScanError,
+        VideoError,
+        ZoneError,
+        db.DatabaseError,
+        sqlite3.Error,
+    ) as e:
         print(f"error: {e}", file=sys.stderr)
     return 1

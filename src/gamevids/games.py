@@ -31,6 +31,14 @@ class Game:
     date: date
     created_at: datetime
     grouping: Grouping  # cameras only; exports and unplaced files are never stored
+    camera_ids: dict[str, int]  # database id by camera label
+
+    def camera(self, label: str) -> CameraGroup:
+        for camera in self.grouping.cameras:
+            if camera.label == label.upper():
+                return camera
+        labels = ", ".join(c.label for c in self.grouping.cameras)
+        raise GameError(f"game {self.id} has no camera {label} (it has {labels})")
 
 
 def _ts(moment: datetime) -> str:
@@ -146,6 +154,7 @@ def load_game(conn: sqlite3.Connection, game_id: int) -> Game:
         raise GameError(f"no game {game_id}")
 
     cameras = []
+    camera_ids = {}
     for cam in conn.execute(
         "SELECT * FROM camera WHERE game_id = ? ORDER BY label", (game_id,)
     ).fetchall():
@@ -157,6 +166,7 @@ def load_game(conn: sqlite3.Connection, game_id: int) -> Game:
                 recordings.append(Recording([]))
             recordings[-1].chapters.append(_chapter(f, cam["serial"]))
         cameras.append(CameraGroup(cam["serial"], cam["label"], recordings))
+        camera_ids[cam["label"]] = cam["id"]
 
     return Game(
         id=row["id"],
@@ -164,6 +174,7 @@ def load_game(conn: sqlite3.Connection, game_id: int) -> Game:
         date=date.fromisoformat(row["date"]),
         created_at=datetime.fromisoformat(row["created_at"]),
         grouping=Grouping(cameras=cameras),
+        camera_ids=camera_ids,
     )
 
 

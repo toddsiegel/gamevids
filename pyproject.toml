@@ -6,7 +6,10 @@ readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "matplotlib>=3.11.2",
+    "numpy>=2.5.4",
+]
 
 [project.scripts]
 gamevids = "gamevids.cli:main"

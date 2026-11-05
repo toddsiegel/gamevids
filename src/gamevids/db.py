@@ -60,6 +60,23 @@ MIGRATIONS = [
         UNIQUE (camera_id, position)
     );
     """,
+    # 2: D-zones and activity curves
+    """
+    CREATE TABLE zone (
+        camera_id INTEGER PRIMARY KEY REFERENCES camera(id) ON DELETE CASCADE,
+        polygon TEXT NOT NULL  -- JSON [[x, y], ...] as fractions of the frame from top-left
+    );
+
+    CREATE TABLE activity_curve (
+        camera_id INTEGER PRIMARY KEY REFERENCES camera(id) ON DELETE CASCADE,
+        start TEXT NOT NULL,  -- wall clock of the first sample
+        rate REAL NOT NULL,  -- samples per second
+        samples BLOB NOT NULL,  -- little-endian float32; NaN where the camera wasn't recording
+        polygon TEXT NOT NULL,  -- the zone the scan used
+        settings TEXT NOT NULL,  -- JSON scan settings
+        scanned_at TEXT NOT NULL
+    );
+    """,
 ]
 
 

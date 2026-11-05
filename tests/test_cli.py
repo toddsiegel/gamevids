@@ -6,7 +6,7 @@ import pytest
 from conftest import FULL_CHAPTER, make_info
 
 import gamevids.cli
-from gamevids import __version__
+from gamevids import __version__, db
 from gamevids.cli import main
 
 
@@ -120,3 +120,66 @@ def test_game_add_uses_the_library_option(game_folder, tmp_path, capsys):
     assert path.exists()
     assert main(["game", "list"]) == 0
     assert "No games yet" in capsys.readouterr().out
+
+
+@pytest.fixture
+def clip_game(make_clip, monkeypatch, capsys):
+    """Game 1: one camera made of a real 2 s clip."""
+    clip = make_clip(
+        "DJI_20261024115345_0001_D.MP4", seconds=2, creation_time="2026-10-24T17:53:46Z"
+    )
+    probe = gamevids.cli.probe_file
+    monkeypatch.setattr("gamevids.cli.probe_file", lambda p: replace(probe(p), serial="CAMA"))
+    assert main(["game", "add", "--title", "vs Hyland Hills", str(clip)]) == 0
+    capsys.readouterr()
+    return clip
+
+
+def test_scan_needs_a_zone(clip_game, capsys):
+    assert main(["scan", "1"]) == 1
+    err = capsys.readouterr().err
+    assert "Camera A has no D-zone yet. Give one with --zone A CORNERS" in err
+    assert "--plot-only" in err
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (["--zone", "A", "0,0 1,1"], "camera A's zone: a zone needs at least 3 corners"),
+        (["--zone", "C", "0,0 1,0 1,1"], "error: game 1 has no camera C (it has A)"),
+        (["--camera", "B"], "error: game 1 has no camera B (it has A)"),
+    ],
+)
+def test_scan_refuses_bad_arguments(clip_game, capsys, args, message):
+    assert main(["scan", "1", *args]) == 1
+    assert message in capsys.readouterr().err
+
+
+def test_plot_only_saves_the_zone_without_scanning(clip_game, tmp_path, library, capsys):
+    plot = tmp_path / "zones.png"
+
+    args = ["--plot-only", "--zone", "a", "0,.5 1,.5 1,1", "--plot", str(plot)]
+    assert main(["scan", "1", *args]) == 0
+
+    assert capsys.readouterr().out == f"Wrote {plot}\n"
+    assert plot.read_bytes().startswith(b"\x89PNG")
+    conn = db.connect(library)
+    zone = conn.execute("SELECT polygon FROM zone").fetchone()[0]
+    assert zone == "[[0.0, 0.5], [1.0, 0.5], [1.0, 1.0]]"
+    assert conn.execute("SELECT COUNT(*) FROM activity_curve").fetchone()[0] == 0
+
+
+def test_scan_saves_curves_and_reuses_the_zone(clip_game, tmp_path, library, capsys, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["scan", "1", "--zone", "A", "0,0 1,0 1,1 0,1"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("Camera A: scanned 0:00:02 of footage in ")
+    assert out.endswith("Wrote game-1-activity.png\n")
+    assert (tmp_path / "game-1-activity.png").exists()
+
+    conn = db.connect(library)
+    samples = conn.execute("SELECT samples FROM activity_curve").fetchone()[0]
+    assert len(samples) == 20 * 4  # 2 s at 10 samples a second, float32
+
+    assert main(["scan", "1", "--camera", "a"]) == 0

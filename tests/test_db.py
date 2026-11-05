@@ -13,7 +13,7 @@ def test_connect_creates_the_library_at_the_latest_version(tmp_path):
     assert path.exists()
     assert db.schema_version(conn) == len(db.MIGRATIONS)
     tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-    assert {"game", "camera", "source_file"} <= tables
+    assert {"game", "camera", "source_file", "zone", "activity_curve"} <= tables
 
 
 def test_reopening_keeps_data_and_runs_nothing_twice(tmp_path):
@@ -37,7 +37,7 @@ def test_a_library_from_a_newer_gamevids_is_refused(tmp_path):
         db.connect(path)
 
 
-def test_removing_a_game_removes_its_cameras_and_files(tmp_path):
+def test_removing_a_game_removes_everything_under_it(tmp_path):
     conn = db.connect(tmp_path / "library.db")
     with conn:
         conn.execute("INSERT INTO game (id, title, date, created_at) VALUES (1, 't', 'd', 'c')")
@@ -47,9 +47,15 @@ def test_removing_a_game_removes_its_cameras_and_files(tmp_path):
             " size, fps_num, fps_den, width, height, video_codec)"
             " VALUES (1, 0, 0, '/a.mp4', 's', 1, 1, 30, 1, 1, 1, 'hevc')"
         )
+        conn.execute("INSERT INTO zone (camera_id, polygon) VALUES (1, '[]')")
+        conn.execute(
+            "INSERT INTO activity_curve (camera_id, start, rate, samples, polygon, settings,"
+            " scanned_at) VALUES (1, 's', 10, x'', '[]', '{}', 'c')"
+        )
         conn.execute("DELETE FROM game")
 
-    assert conn.execute("SELECT COUNT(*) FROM source_file").fetchone()[0] == 0
+    for table in ("source_file", "zone", "activity_curve"):
+        assert conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
 
 
 def test_default_path_prefers_the_environment(monkeypatch, tmp_path):
