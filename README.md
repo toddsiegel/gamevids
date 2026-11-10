@@ -13,6 +13,17 @@ uv run ruff check . && uv run ruff format --check .
 
 Layout: `src/gamevids` is the core (no Qt, has the CLI); `src/gamevids_ui` is the Qt app.
 
+## Desktop app
+
+The app plays video through libmpv, which comes from the system rather than from `uv`:
+
+```sh
+sudo apt install libmpv2   # Ubuntu / Debian
+uv run gamevids-ui         # takes --db like the CLI
+```
+
+Pick a game on the left to play its first camera. Each camera's files play back-to-back as one timeline: thin ticks on the seek bar mark where the camera split a file, and heavy marks show where it was stopped and restarted (the gap is cut out). Switching cameras keeps the same moment on the wall clock. The keys are listed under the player.
+
 ## Settings
 
 Clip detection reads its settings from the `[detect]` section of `~/.config/gamevids/config.toml` (or `$GAMEVIDS_CONFIG`, or `--config`). The file is optional, and any setting left out keeps its default:

@@ -1,1 +1,1 @@
-"""Qt desktop app for Game Vids. Built on top of the `gamevids` core; the UI starts at step 7."""
+"""Qt desktop app for Game Vids, built on the `gamevids` core. Run it with `gamevids-ui`."""
