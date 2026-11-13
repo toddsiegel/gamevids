@@ -394,7 +394,7 @@ def cmd_periods(args: argparse.Namespace) -> int:
         game = load_game(conn, args.game)
         cameras = game.grouping.cameras
         camera_ids = [game.camera_ids[c.label] for c in cameras]
-        footage = (min(c.start for c in cameras), max(c.end for c in cameras))
+        footage = game.grouping.footage
         saved = load_periods(conn, game.id)
         curves = {c.label: load_curve(conn, game.camera_ids[c.label]) for c in cameras}
         unscanned = [label for label, curve in curves.items() if curve is None]

@@ -75,6 +75,12 @@ def test_cameras_are_split_by_serial_and_labelled_by_start_time():
 
     assert [(c.label, c.serial) for c in grouping.cameras] == [("A", "EARLY"), ("B", "LATE")]
     assert grouping.date == GAME_START
+    assert grouping.footage == (GAME_START, GAME_START + timedelta(seconds=660))
+
+
+def test_a_grouping_with_no_cameras_has_no_footage():
+    with pytest.raises(GroupingError, match="no cameras"):
+        group_files([]).footage  # noqa: B018
 
 
 def test_files_without_serial_or_start_time_are_unassigned():

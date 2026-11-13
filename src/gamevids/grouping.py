@@ -128,6 +128,13 @@ class Grouping:
         starts = [c.start for c in self.cameras]
         return min(starts) if starts else None
 
+    @property
+    def footage(self) -> tuple[datetime, datetime]:
+        """From the first camera's start to the last camera's end, on the wall clock."""
+        if not self.cameras:
+            raise GroupingError("no cameras, so no footage")
+        return min(c.start for c in self.cameras), max(c.end for c in self.cameras)
+
 
 def was_split(info: MediaInfo) -> bool:
     """True when the camera ended this file because it hit the chapter size limit."""

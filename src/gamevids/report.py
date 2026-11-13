@@ -180,7 +180,7 @@ def format_periods(
     if not periods:
         return "No periods yet."
     labels = {camera_id: label for label, camera_id in game.camera_ids.items()}
-    footage_end = max(c.end for c in game.grouping.cameras)
+    _, footage_end = game.grouping.footage
     starts = [p.start for p in periods]
     ends = [*starts[1:], footage_end]
     all_clips = [clip for cam_clips in clips.values() for clip in cam_clips]
