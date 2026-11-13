@@ -245,6 +245,13 @@ class Period:
         return period_name(self.number)
 
 
+def period_ends(periods: list[Period], footage_end: datetime) -> list[datetime]:
+    """Where each period ends: at the next one's start, and the last with the footage."""
+    if not periods:
+        return []
+    return [*(p.start for p in periods[1:]), footage_end]
+
+
 def period_name(number: int) -> str:
     """P1, P2, P3, then OT, OT2, ..."""
     if number <= REGULATION:

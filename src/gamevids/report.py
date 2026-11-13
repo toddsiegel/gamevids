@@ -6,7 +6,7 @@ from datetime import datetime
 from gamevids.detect import Clip, DetectSettings
 from gamevids.games import Game, GameSummary
 from gamevids.grouping import Chapter, FileKind, Grouping
-from gamevids.periods import Period, PeriodSettings, Proposal
+from gamevids.periods import Period, PeriodSettings, Proposal, period_ends
 from gamevids.probe import MediaInfo
 
 HEADERS = ("CAM", "START", "END", "LENGTH", "PERIOD", "NOTE", "FILE")
@@ -166,6 +166,21 @@ def format_clips(game: Game, clips: dict[str, list[Clip]], triage_speed: float =
     return "\n".join(lines)
 
 
+def period_note(period: Period, proposal: Proposal | None) -> str:
+    """Where a period's start came from, or blank when the proposal can't say."""
+    if period.moved:
+        return "set by hand"
+    if proposal is None:
+        return ""
+    if spell := proposal.spell_at(period.start):
+        return f"quiet {clock(spell.start)}-{clock(spell.end)} ({hms(spell.duration)})"
+    if period.start == proposal.warmup_end:
+        return "at the end of the warmup"
+    if period.start == proposal.footage_start:
+        return "at the start of the footage"
+    return ""
+
+
 def format_periods(
     game: Game,
     periods: list[Period],
@@ -182,21 +197,11 @@ def format_periods(
     labels = {camera_id: label for label, camera_id in game.camera_ids.items()}
     _, footage_end = game.grouping.footage
     starts = [p.start for p in periods]
-    ends = [*starts[1:], footage_end]
     all_clips = [clip for cam_clips in clips.values() for clip in cam_clips]
 
     rows = []
-    for period, end in zip(periods, ends, strict=True):
-        if period.moved:
-            note = "set by hand"
-        elif proposal and (spell := proposal.spell_at(period.start)):
-            note = f"quiet {clock(spell.start)}-{clock(spell.end)} ({hms(spell.duration)})"
-        elif proposal and period.start == proposal.warmup_end:
-            note = "at the end of the warmup"
-        elif proposal and period.start == proposal.footage_start:
-            note = "at the start of the footage"
-        else:
-            note = ""
+    for period, end in zip(periods, period_ends(periods, footage_end), strict=True):
+        note = period_note(period, proposal)
         goalie = labels.get(period.goalie_camera_id, "-")
         inside = sum(period.start <= c.start < end for c in all_clips)
         count = str(inside) if clips else ""

@@ -13,6 +13,7 @@ from gamevids.periods import (
     load_periods,
     move_start,
     parse_period,
+    period_ends,
     period_name,
     periods_from_proposal,
     propose_periods,
@@ -208,6 +209,12 @@ def test_a_new_proposal_keeps_our_goalies_ends():
     assert [p.goalie_camera_id for p in periods] == [10, 10, 10, 20]
     assert periods[0].start == proposal.starts[0]
     assert not any(p.moved for p in periods)
+
+
+def test_each_period_ends_where_the_next_starts():
+    end = at(3200)
+    assert period_ends(PERIODS, end) == [PERIODS[1].start, PERIODS[2].start, end]
+    assert period_ends([], end) == []
 
 
 def test_moving_a_start_by_hand():
