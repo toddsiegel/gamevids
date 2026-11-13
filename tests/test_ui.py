@@ -94,6 +94,21 @@ def test_precise_time_shows_milliseconds(window_class):
     assert precise(59.9996) == "0:01:00.000"
 
 
+def test_a_player_without_controls_hides_them_and_binds_no_keys(window_class):
+    from PySide6.QtGui import QShortcut
+
+    from gamevids_ui.player import Player
+
+    bare, full = Player(controls=False), Player()
+    try:
+        assert bare.controls.isHidden() and not full.controls.isHidden()
+        assert bare.findChildren(QShortcut) == []
+        assert len(full.findChildren(QShortcut)) == 10
+    finally:
+        for player in (bare, full):
+            player.shutdown()
+
+
 def test_window_lists_games_newest_first(window_class, library):
     with closing(db.connect(library)) as conn:
         for day, title in [("2026-10-17", "vs Lafayette"), ("2026-10-24", "vs Hyland Hills")]:

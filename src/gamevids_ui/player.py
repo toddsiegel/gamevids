@@ -36,10 +36,15 @@ def precise(seconds: float) -> str:
 
 
 class Player(QWidget):
+    """The video, with a seek bar, camera picker and keys under it unless `controls` is False.
+
+    Without its controls a page drives the player itself and binds its own keys.
+    """
+
     # The camera playing and the wall-clock moment on screen, as playback moves.
     clock_changed = Signal(str, object)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, controls: bool = True):
         super().__init__(parent)
         self.game: Game | None = None
         self.timelines: dict[str, Timeline] = {}
@@ -84,17 +89,23 @@ class Player(QWidget):
         details.addSpacing(12)
         details.addWidget(self.file_label, 1)
 
+        self.controls = QWidget()
+        below = QVBoxLayout(self.controls)
+        below.setContentsMargins(0, 0, 0, 0)
+        below.addLayout(transport)
+        below.addLayout(details)
+        below.addWidget(keys)
+        self.controls.setVisible(controls)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(screen, 1)
-        layout.addLayout(transport)
-        layout.addLayout(details)
-        layout.addWidget(keys)
+        layout.addWidget(self.controls)
 
-        for key, action in [
+        keymap = [
             ("Space", self.toggle_pause),
-            ("Right", lambda: self.mpv.command_async("frame-step")),
-            ("Left", lambda: self.mpv.command_async("frame-back-step")),
+            ("Right", self.step_forward),
+            ("Left", self.step_back),
             ("Shift+Right", lambda: self.skip(5)),
             ("Shift+Left", lambda: self.skip(-5)),
             ("Ctrl+Right", lambda: self.skip(60)),
@@ -102,7 +113,8 @@ class Player(QWidget):
             ("PgDown", self.next_join),
             ("PgUp", self.previous_join),
             ("C", self.next_camera),
-        ]:
+        ]
+        for key, action in keymap if controls else []:
             QShortcut(QKeySequence(key), self, action)
 
         self._timer = QTimer(self)
@@ -196,6 +208,16 @@ class Player(QWidget):
     def pause(self) -> None:
         if self.timeline is not None:
             self.mpv.pause = True
+
+    def step_forward(self) -> None:
+        """One frame on, pausing."""
+        if self.timeline is not None:
+            self.mpv.command_async("frame-step")
+
+    def step_back(self) -> None:
+        """One frame back, pausing."""
+        if self.timeline is not None:
+            self.mpv.command_async("frame-back-step")
 
     def toggle_pause(self) -> None:
         if self.timeline is not None:
