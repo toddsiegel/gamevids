@@ -109,6 +109,28 @@ def test_a_player_without_controls_hides_them_and_binds_no_keys(window_class):
             player.shutdown()
 
 
+def test_a_seek_before_the_footage_opens_opens_it_there(window_class, tmp_path):
+    from dataclasses import replace
+
+    from gamevids_ui.player import Player
+
+    path = tmp_path / "a.MP4"
+    path.touch()
+    grouping = group_files([replace(make_info("a.MP4"), path=path)])
+    with closing(db.connect(tmp_path / "library.db")) as conn:
+        game = load_game(conn, add_game(conn, "vs Lafayette", grouping))
+    player = Player()
+    loads = []
+    player.video.load = lambda url, start=0.0: loads.append(start)
+    try:
+        player.set_game(game)  # opens at the start, but mpv hasn't opened it yet
+        player.show_moment(GAME_START + timedelta(seconds=90))
+
+        assert loads == [0.0, 90.0]
+    finally:
+        player.shutdown()
+
+
 def test_window_lists_games_newest_first(window_class, library):
     with closing(db.connect(library)) as conn:
         for day, title in [("2026-10-17", "vs Lafayette"), ("2026-10-24", "vs Hyland Hills")]:

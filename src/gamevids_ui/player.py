@@ -224,9 +224,15 @@ class Player(QWidget):
             self.mpv.command_async("cycle", "pause")
 
     def seek(self, position: float, exact: bool = True) -> None:
-        if self.timeline is not None:
-            precision = "exact" if exact else "keyframes"
-            self.mpv.command_async("seek", f"{position:.3f}", f"absolute+{precision}")
+        if self.timeline is None:
+            return
+        if self.mpv.time_pos is None:
+            # Still opening, or waiting for the widget to be shown: mpv drops a seek
+            # that arrives before the file is open, so open it at `position` instead.
+            self.video.load(self.timeline.edl(), position)
+            return
+        precision = "exact" if exact else "keyframes"
+        self.mpv.command_async("seek", f"{position:.3f}", f"absolute+{precision}")
 
     def skip(self, seconds: float) -> None:
         position = self.position()
