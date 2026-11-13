@@ -14,6 +14,14 @@ from gamevids import __version__, config, db
 from gamevids.activity import ScanError, load_curve, save_curve, scan_camera
 from gamevids.config import ConfigError, load_config
 from gamevids.detect import DetectError, detect_clips, load_clips, load_detection, save_clips
+from gamevids.export import (
+    ExportError,
+    default_path,
+    export_video,
+    kept_clips,
+    plan_shots,
+    save_export,
+)
 from gamevids.frames import VideoError, still_frame
 from gamevids.games import (
     GAME_SORTS,
@@ -493,6 +501,45 @@ def cmd_triage(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_export(args: argparse.Namespace) -> int:
+    with _open(args) as conn:
+        game = load_game(conn, args.game)
+        shots = plan_shots(game, kept_clips(conn, game))
+        if not shots:
+            raise CommandError(
+                f"Game {game.id} has no kept clips. Keep some on the app's Triage tab first "
+                f"(`gamevids triage {game.id}` shows how far triage has got)."
+            )
+        triage = load_triage(conn, game)
+        undecided = len(triage.clips) - triage.decided
+        if undecided:
+            print(
+                f"warning: {undecided} of our goalie's clips are still undecided and left out.",
+                file=sys.stderr,
+            )
+        output = args.output or default_path(game)
+        if output.is_dir() or not output.suffix:  # a folder, perhaps not made yet
+            output = output / default_path(game).name
+        if output.exists() and not args.force:
+            raise CommandError(f"{output} already exists. Pass --force to replace it.")
+
+        progress = _ProgressLine("Exporting")
+        started = time.monotonic()
+        try:
+            result = export_video(game.title, shots, output, progress=progress)
+        except KeyboardInterrupt:
+            progress.finish()
+            print("Stopped. Nothing was written.", file=sys.stderr)
+            return 130
+        progress.finish()
+        save_export(conn, game.id, result)
+    took = time.monotonic() - started
+    size = result.size / 1e6
+    clips = f"{result.clips} clip" + ("" if result.clips == 1 else "s")
+    print(f"Wrote {result.path}: {clips} in {hms(result.duration)}, {size:.0f} MB, in {hms(took)}.")
+    return 0
+
+
 def _period_time(text: str) -> tuple[int, str]:
     """`P2=12:15:30` as `(2, "12:15:30")`; the time is checked against the game later."""
     name, sep, value = text.partition("=")
@@ -709,6 +756,27 @@ def build_parser() -> argparse.ArgumentParser:
     triage.add_argument("game", type=int, help="game id, from `gamevids game list`")
     triage.set_defaults(handler=cmd_triage)
 
+    export = commands.add_parser(
+        "export",
+        help="make the game video from the kept clips",
+        description="Make the game video: a title card with the game's title, then every "
+        "kept clip from every camera in the order they happened, with a short dip to black "
+        "between clips. The video is 1080p60 H.264 with the rink audio, written to "
+        '"~/Videos/Game Vids/<title> - DZone.mp4" unless --output says otherwise.',
+    )
+    export.add_argument("game", type=int, help="game id, from `gamevids game list`")
+    export.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        help="the video file to write, or a folder to write it in (a name with no extension is a "
+        "folder)",
+    )
+    export.add_argument(
+        "--force", action="store_true", help="replace the video if it already exists"
+    )
+    export.set_defaults(handler=cmd_export)
+
     return parser
 
 
@@ -731,6 +799,7 @@ def main(argv: list[str] | None = None) -> int:
         ConfigError,
         VideoError,
         ZoneError,
+        ExportError,
         db.DatabaseError,
         sqlite3.Error,
     ) as e:

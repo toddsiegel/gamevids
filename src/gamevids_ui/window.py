@@ -22,6 +22,7 @@ from gamevids.config import Config
 from gamevids.games import GameError, list_games, load_game
 from gamevids.report import hms
 from gamevids_ui.add_game import AddGameDialog
+from gamevids_ui.export_page import ExportPage
 from gamevids_ui.periods_page import PeriodsPage
 from gamevids_ui.player import Player
 from gamevids_ui.scans import ScanQueue
@@ -61,12 +62,14 @@ class MainWindow(QMainWindow):
         self.zones = ZonesPage(conn, self.scans)
         self.periods = PeriodsPage(conn, self.scans, settings=config.periods)
         self.triage = TriagePage(conn)
+        self.export = ExportPage(conn)
         self.pages = QTabWidget()
         self.pages.setDocumentMode(True)
         self.pages.addTab(self.player, "Watch")
         self.pages.addTab(self.zones, "D-Zones")
         self.pages.addTab(self.periods, "Periods")
         self.pages.addTab(self.triage, "Triage")
+        self.pages.addTab(self.export, "Export")
         self.pages.currentChanged.connect(self._page_picked)
         for index in range(self.pages.count()):
             action = QAction(self)
@@ -119,12 +122,14 @@ class MainWindow(QMainWindow):
             self.zones.clear()
             self.periods.clear(str(e))
             self.triage.clear(str(e))
+            self.export.clear(str(e))
             return
         self.setWindowTitle(f"{game.title} — Game Vids")
         self.player.set_game(game)
         self.zones.set_game(game)
         self.periods.set_game(game)
         self.triage.set_game(game)
+        self.export.set_game(game)
         if self.pages.currentWidget() is self.player:
             self.player.video.setFocus()
 
@@ -140,6 +145,8 @@ class MainWindow(QMainWindow):
         elif page is self.triage:
             self.triage.refresh()  # the periods may have changed which clips are ours
             self.triage.player.video.setFocus()
+        elif page is self.export:
+            self.export.refresh()  # triage may have kept or discarded clips
 
     def _show_scan_status(self, _camera_id: int = 0) -> None:
         job = self.scans.running
@@ -158,6 +165,17 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Scan failed: {result.error}", 15_000)
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        if self.export.busy:
+            answer = QMessageBox.question(
+                self,
+                "Stop Exporting?",
+                "A game video is still being made. Quitting stops it, and nothing is saved.",
+                QMessageBox.StandardButton.Close | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if answer != QMessageBox.StandardButton.Close:
+                event.ignore()
+                return
         if self.scans.busy:
             answer = QMessageBox.question(
                 self,
@@ -174,5 +192,6 @@ class MainWindow(QMainWindow):
         self.zones.shutdown()
         self.periods.shutdown()
         self.triage.shutdown()
+        self.export.shutdown()
         self.player.shutdown()
         super().closeEvent(event)

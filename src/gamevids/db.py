@@ -117,6 +117,18 @@ MIGRATIONS = [
     """
     ALTER TABLE source_file ADD COLUMN timecode TEXT;
     """,
+    # 6: game videos made
+    """
+    CREATE TABLE export (
+        id INTEGER PRIMARY KEY,
+        game_id INTEGER NOT NULL REFERENCES game(id) ON DELETE CASCADE,
+        path TEXT NOT NULL,
+        settings TEXT NOT NULL,  -- JSON export settings
+        clips INTEGER NOT NULL,  -- kept clips in the video
+        duration REAL NOT NULL,  -- seconds
+        created_at TEXT NOT NULL
+    );
+    """,
 ]
 
 

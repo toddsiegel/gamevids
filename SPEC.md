@@ -61,7 +61,7 @@ A desktop app for turning full-game footage of a hockey goalie into short, watch
 - **`gamevids` (core):** a pure Python package with no Qt imports. It handles probing, camera grouping and chapter stitching, the database, the activity scan, clip detection, period proposals, triage state and export. It also exposes a small CLI (`gamevids …`) so every core feature can be tested without the UI.
 - **`gamevids_ui`:** PySide6/Qt desktop app that embeds **libmpv** for playback, giving smooth, frame-accurate seeking on 1080p120 HEVC with VA-API. Stitched camera timelines play through mpv EDL so chapter boundaries are seamless.
 - **Storage:** SQLite (`library.db`) in the user's data folder (`~/.local/share/gamevids/` on Linux), overridden with `--db` or `GAMEVIDS_DB`. The schema is built by numbered migrations tracked with `PRAGMA user_version`. Source videos stay where they are, and the app never modifies or moves them.
-- **Video tooling:** ffmpeg/ffprobe via subprocess. The scan uses VA-API decode at reduced resolution. Export uses VA-API H.264 encode, with libx264 as a fallback.
+- **Video tooling:** ffmpeg/ffprobe via subprocess. The scan uses VA-API decode at reduced resolution. Export decodes with VA-API and encodes with libx264, which measured faster than VA-API H.264 encode on this machine (~5× vs ~3.7× real time) at half the file size.
 - **Motion detection:** OpenCV/NumPy frame differencing inside the polygon mask on downscaled frames at a reduced sample rate. The detector is a swappable stage that outputs segments with a score, so a model-based detector can replace it later.
 - **Tooling:** `uv` for environment and dependencies, `pytest`, `ruff`.
 - **Platform:** Linux first. Qt and mpv keep a Mac/Windows port possible.
@@ -96,7 +96,7 @@ Each step ends with something you can run and check yourself. Steps 1–6 and 14
 | 9 ✅ | **D-zone editor.** Polygon drawing on a still frame per camera, prefilled from the previous game; save it, then start the scan in the background with a progress display. | Draw zones for both cameras and watch both scans complete. |
 | 10 ✅ | **Period timeline.** Activity curves for both cameras on one timeline, draggable period markers from step 6, son's-end picker. | Confirm the periods for a real game and click a marker to jump the player there. |
 | 11 ✅ | **Triage screen.** Candidate list plus player, auto-play at 2×, keep/discard/trim/star/undo keys, saved progress. | Triage a full game by keyboard, quit partway, and resume where you left off. |
-| 12 | **Assemble and export.** Title card, chronological merge of both cameras, dip-to-black transitions, 1080p60 H.264 + AAC, progress, open the output folder. | Export a game and watch it on a phone or laptop. |
+| 12 ✅ | **Assemble and export.** Title card, chronological merge of both cameras, dip-to-black transitions, 1080p60 H.264 + AAC, progress, open the output folder. | Export a game and watch it on a phone or laptop. |
 | 13 | **End-to-end polish.** Run one new game and a few old games through the whole flow; fix rough edges. | One new game done start to finish. Check the time against the ~15 min target. |
 | 14 | **Detection benchmark (follow-up).** An eval command that compares detected clips to existing LosslessCut `.llc` cuts and reports recall and the clip count; use it to adjust the fixed detection defaults. | `gamevids eval <game> <file.llc>` shows how many of your hand cuts were caught. |
 

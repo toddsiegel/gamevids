@@ -543,3 +543,36 @@ def test_triage_lists_our_goalies_clips_and_where_triage_resumes(two_camera_game
     assert [r[4] for r in rows] == sorted(r[4] for r in rows)
     assert lines[-2].startswith(f"1 of {len(rows)} clips triaged: 1 kept (")
     assert lines[-1].startswith("Next: #2 (clip ")
+
+
+def test_export_writes_the_game_video_and_refuses_to_replace_it_unless_forced(
+    clip_game, library, tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert main(["export", "1"]) == 1
+    assert "Game 1 has no kept clips." in capsys.readouterr().err
+
+    conn = db.connect(library)
+    with conn:
+        conn.execute(
+            "INSERT INTO clip (camera_id, start, end, score, status) VALUES (1, ?, ?, 0.1, 'kept')",
+            (GAME_START.isoformat(), (GAME_START + timedelta(seconds=1.5)).isoformat()),
+        )
+
+    assert main(["export", "1"]) == 0
+
+    video = tmp_path / "Videos" / "Game Vids" / "vs Hyland Hills - DZone.mp4"
+    out = capsys.readouterr().out
+    assert out.startswith(f"Wrote {video}: 1 clip in 0:00:04, ")
+    assert video.stat().st_size > 0
+    row = conn.execute("SELECT game_id, path, clips, duration FROM export").fetchone()
+    assert tuple(row) == (1, str(video), 1, 4.5)
+
+    assert main(["export", "1"]) == 1
+    assert f"{video} already exists. Pass --force to replace it." in capsys.readouterr().err
+
+    folder = tmp_path / "elsewhere"  # not made yet
+    assert main(["export", "1", "-o", str(folder)]) == 0
+    assert (folder / video.name).exists()
+    assert main(["export", "1", "--force"]) == 0
+    assert conn.execute("SELECT COUNT(*) FROM export").fetchone()[0] == 3
