@@ -214,7 +214,10 @@ def cmd_game_rename(args: argparse.Namespace) -> int:
 
 
 class _ProgressLine:
-    """Shows scan progress on stderr: one updating line on a terminal, else every 10%."""
+    """Shows progress on stderr: one updating line on a terminal, else every 10%.
+
+    `label` names what's progressing, e.g. "Camera A".
+    """
 
     def __init__(self, label: str) -> None:
         self.label = label
@@ -236,7 +239,7 @@ class _ProgressLine:
             self.next_step = int(fraction * 10 + 1) / 10
         elapsed = now - self.started
         speed = f", {done / elapsed:.1f}x real time" if elapsed > 1 else ""
-        text = f"Camera {self.label}: {hms(done)} of {hms(total)} ({fraction:.0%}){speed}"
+        text = f"{self.label}: {hms(done)} of {hms(total)} ({fraction:.0%}){speed}"
         print(
             f"\r{text}\033[K" if self.tty else text,
             end="" if self.tty else "\n",
@@ -316,7 +319,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
 
         for label in [] if args.plot_only else labels:
             camera = game.camera(label)
-            progress = _ProgressLine(label)
+            progress = _ProgressLine(f"Camera {label}")
             started = time.monotonic()
             try:
                 curve = scan_camera(camera, zones[label], progress=progress)
