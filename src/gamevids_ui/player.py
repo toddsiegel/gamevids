@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QFontDatabase, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QComboBox,
@@ -36,11 +36,15 @@ def precise(seconds: float) -> str:
 
 
 class Player(QWidget):
+    # The camera playing and the wall-clock moment on screen, as playback moves.
+    clock_changed = Signal(str, object)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.game: Game | None = None
         self.timelines: dict[str, Timeline] = {}
         self.timeline: Timeline | None = None
+        self._shown: tuple[str, datetime] | None = None  # last sent by clock_changed
 
         self.video = MpvWidget()
         self.mpv = self.video.mpv
@@ -131,9 +135,9 @@ class Player(QWidget):
         else:
             self.clear(f"{game.title} has no cameras.")
 
-    def show_camera(self, label: str) -> None:
-        """Play camera `label`, at the same wall-clock moment as the camera before it."""
-        moment = self.wall_clock()
+    def show_camera(self, label: str, moment: datetime | None = None) -> None:
+        """Play camera `label` at `moment`, or at the moment the camera before it was at."""
+        moment = moment or self.wall_clock()
         timeline = self.timelines[label]
         if missing := timeline.missing_files():
             names = "\n".join(str(p) for p in missing)
@@ -147,6 +151,24 @@ class Player(QWidget):
         self.scrubber.set_position(start)
         self.message.hide()
         self.video.load(timeline.edl(), start)
+
+    def show_moment(self, moment: datetime, label: str | None = None, exact: bool = True) -> None:
+        """Seek to wall-clock `moment`, switching to camera `label` first if it's given.
+
+        A moment where the camera wasn't recording shows the next footage it has.
+        """
+        if label is not None and label in self.timelines and label != self.label:
+            self.camera_box.blockSignals(True)
+            self.camera_box.setCurrentText(label)
+            self.camera_box.blockSignals(False)
+            self.show_camera(label, moment)
+        elif self.timeline is not None:
+            self.seek(self.timeline.position(moment), exact)
+
+    @property
+    def label(self) -> str | None:
+        """The camera playing, if any."""
+        return self.timeline.label if self.timeline else None
 
     def _camera_picked(self, label: str) -> None:
         if label and label in self.timelines:
@@ -170,6 +192,10 @@ class Player(QWidget):
         if position is None or self.timeline is None:
             return None
         return self.timeline.wall_clock(position)
+
+    def pause(self) -> None:
+        if self.timeline is not None:
+            self.mpv.pause = True
 
     def toggle_pause(self) -> None:
         if self.timeline is not None:
@@ -214,6 +240,9 @@ class Player(QWidget):
         self.play_button.setText("Play" if self.mpv.pause else "Pause")
         self.scrubber.set_position(position)
         moment = self.timeline.wall_clock(position)
+        if self._shown != (self.timeline.label, moment):
+            self._shown = (self.timeline.label, moment)
+            self.clock_changed.emit(self.timeline.label, moment)
         self.time_label.setText(
             f"{precise(position)} / {hms(self.timeline.duration)}   {clock(moment)}"
         )

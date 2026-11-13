@@ -22,6 +22,7 @@ from gamevids.config import Config
 from gamevids.games import GameError, list_games, load_game
 from gamevids.report import hms
 from gamevids_ui.add_game import AddGameDialog
+from gamevids_ui.periods_page import PeriodsPage
 from gamevids_ui.player import Player
 from gamevids_ui.scans import ScanQueue
 from gamevids_ui.zones_page import ZonesPage
@@ -57,10 +58,12 @@ class MainWindow(QMainWindow):
 
         self.player = Player()
         self.zones = ZonesPage(conn, self.scans)
+        self.periods = PeriodsPage(conn, self.scans, settings=config.periods)
         self.pages = QTabWidget()
         self.pages.setDocumentMode(True)
         self.pages.addTab(self.player, "Watch")
         self.pages.addTab(self.zones, "D-Zones")
+        self.pages.addTab(self.periods, "Periods")
         self.pages.currentChanged.connect(self._page_picked)
         for index in range(self.pages.count()):
             action = QAction(self)
@@ -111,18 +114,24 @@ class MainWindow(QMainWindow):
         except GameError as e:
             self.player.clear(str(e))
             self.zones.clear()
+            self.periods.clear(str(e))
             return
         self.setWindowTitle(f"{game.title} — Game Vids")
         self.player.set_game(game)
         self.zones.set_game(game)
+        self.periods.set_game(game)
         if self.pages.currentWidget() is self.player:
             self.player.video.setFocus()
 
     def _page_picked(self, _index: int) -> None:
-        if self.pages.currentWidget() is not self.player and self.player.timeline is not None:
-            self.player.mpv.pause = True
-        if self.pages.currentWidget() is self.zones:
+        page = self.pages.currentWidget()
+        for player in (self.player, self.periods.player):
+            if not page.isAncestorOf(player):
+                player.pause()  # only the page on screen plays
+        if page is self.zones:
             self.zones.canvas.setFocus()
+        elif page is self.periods:
+            self.periods.player.video.setFocus()
 
     def _show_scan_status(self, _camera_id: int = 0) -> None:
         job = self.scans.running
@@ -155,5 +164,6 @@ class MainWindow(QMainWindow):
                 return
         self.scans.stop_all()
         self.zones.shutdown()
+        self.periods.shutdown()
         self.player.shutdown()
         super().closeEvent(event)

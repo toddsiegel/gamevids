@@ -298,6 +298,13 @@ def periods_from_proposal(
     ]
 
 
+def remove_last(periods: list[Period]) -> list[Period]:
+    """Drop the last period, say an overtime the proposal found that wasn't played."""
+    if not periods:
+        raise PeriodError("the game has no periods to remove")
+    return periods[:-1]
+
+
 def move_start(
     periods: list[Period],
     number: int,
@@ -335,8 +342,11 @@ def move_start(
     return [*periods[:index], changed, *periods[index + 1 :]]
 
 
-def set_goalie(periods: list[Period], camera_ids: list[int], first: int) -> list[Period]:
-    """Put our goalie at `first`'s end in P1, alternating ends after that."""
+def set_goalie(periods: list[Period], camera_ids: list[int], first: int | None) -> list[Period]:
+    """Put our goalie at `first`'s end in P1, alternating ends after that.
+
+    None means P1's end isn't known, and so neither is any later period's.
+    """
     return [replace(p, goalie_camera_id=goalie_for(camera_ids, first, p.number)) for p in periods]
 
 

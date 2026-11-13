@@ -17,6 +17,7 @@ from gamevids.periods import (
     period_name,
     periods_from_proposal,
     propose_periods,
+    remove_last,
     resolve_clock,
     save_periods,
     set_goalie,
@@ -215,6 +216,17 @@ def test_each_period_ends_where_the_next_starts():
     end = at(3200)
     assert period_ends(PERIODS, end) == [PERIODS[1].start, PERIODS[2].start, end]
     assert period_ends([], end) == []
+
+
+def test_an_unknown_p1_goalie_leaves_every_period_unknown():
+    with_goalie = set_goalie(PERIODS, [10, 20], 10)
+    assert [p.goalie_camera_id for p in set_goalie(with_goalie, [10, 20], None)] == [None] * 3
+
+
+def test_the_last_period_can_be_removed():
+    assert remove_last(PERIODS) == PERIODS[:2]
+    with pytest.raises(PeriodError, match="no periods"):
+        remove_last([])
 
 
 def test_moving_a_start_by_hand():
