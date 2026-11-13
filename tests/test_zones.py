@@ -3,12 +3,16 @@ import pytest
 
 from gamevids import db
 from gamevids.zones import (
+    DEFAULT_ZONE,
+    Suggestion,
     ZoneError,
+    check_polygon,
     format_polygon,
     load_zone,
     parse_polygon,
     polygon_mask,
     save_zone,
+    suggest_zone,
 )
 
 
@@ -67,3 +71,64 @@ def test_zones_are_saved_and_replaced(library):
 
     assert load_zone(conn, 1) == ((0, 0.5), (1, 0.5), (1, 1), (0, 1))
     assert np.isclose(polygon_mask(load_zone(conn, 1), 4, 4).mean(), 0.5)
+
+
+def _game(conn, title, day, *cameras):
+    """Add a game on `day` with cameras given as (serial, label, zone or None); return their ids."""
+    with conn:
+        game_id = conn.execute(
+            "INSERT INTO game (title, date, created_at) VALUES (?, ?, 'c')", (title, day)
+        ).lastrowid
+        ids = {
+            label: conn.execute(
+                "INSERT INTO camera (game_id, serial, label) VALUES (?, ?, ?)",
+                (game_id, serial, label),
+            ).lastrowid
+            for serial, label, _ in cameras
+        }
+    for _, label, polygon in cameras:
+        if polygon:
+            save_zone(conn, ids[label], polygon)
+    return ids
+
+
+LOW = ((0, 0.6), (1, 0.6), (1, 1), (0, 1))
+HIGH = ((0, 0.4), (1, 0.4), (1, 1), (0, 1))
+MID = ((0, 0.5), (1, 0.5), (1, 1), (0, 1))
+
+
+def test_with_no_other_zones_the_default_shape_is_suggested(library):
+    conn = db.connect(library)
+    ids = _game(conn, "first", "2026-10-17", ("S1", "A", None))
+
+    assert suggest_zone(conn, ids["A"]) == Suggestion(DEFAULT_ZONE, None, None)
+    check_polygon(DEFAULT_ZONE)
+
+
+def test_the_same_camera_in_the_latest_earlier_game_is_suggested(library):
+    conn = db.connect(library)
+    _game(conn, "old", "2026-10-10", ("S1", "A", MID), ("S2", "B", MID))
+    _game(conn, "last", "2026-10-17", ("S2", "A", LOW), ("S1", "B", HIGH))
+    _game(conn, "later", "2026-10-30", ("S1", "A", MID))
+    ids = _game(conn, "this", "2026-10-24", ("S1", "A", None), ("S3", "B", None))
+
+    # The serial is matched even though camera S1 has a different label in that game.
+    assert suggest_zone(conn, ids["A"]) == Suggestion(HIGH, 2, "B")
+    # No serial match there: the same label wins.
+    assert suggest_zone(conn, ids["B"]) == Suggestion(HIGH, 2, "B")
+
+
+def test_a_later_game_is_used_when_none_is_earlier(library):
+    conn = db.connect(library)
+    ids = _game(conn, "this", "2026-10-10", ("S1", "A", None))
+    _game(conn, "much later", "2026-11-30", ("S1", "A", LOW))
+    _game(conn, "next", "2026-10-17", ("S9", "A", HIGH))
+
+    assert suggest_zone(conn, ids["A"]) == Suggestion(HIGH, 3, "A")
+
+
+def test_the_cameras_own_game_is_never_suggested(library):
+    conn = db.connect(library)
+    ids = _game(conn, "this", "2026-10-10", ("S1", "A", LOW), ("S2", "B", None))
+
+    assert suggest_zone(conn, ids["B"]).polygon == DEFAULT_ZONE

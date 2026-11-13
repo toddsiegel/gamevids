@@ -224,3 +224,21 @@ def load_detection(conn: sqlite3.Connection, camera_id: int) -> Detection | None
         curve_scanned_at=datetime.fromisoformat(row["curve_scanned_at"]),
         detected_at=datetime.fromisoformat(row["detected_at"]),
     )
+
+
+def detect_after_scan(
+    conn: sqlite3.Connection,
+    camera_id: int,
+    curve: ActivityCurve,
+    settings: DetectSettings = DEFAULT_SETTINGS,
+) -> list[Segment] | None:
+    """Find a freshly scanned camera's clips and save them, as the scan's last step.
+
+    Returns None, and leaves the clips alone, when some have been triaged:
+    replacing them would lose that work, so it's left for `gamevids detect --force`.
+    """
+    if any(c.triaged for c in load_clips(conn, camera_id)):
+        return None
+    segments = detect_clips(curve, settings)
+    save_clips(conn, camera_id, segments, settings, curve)
+    return segments

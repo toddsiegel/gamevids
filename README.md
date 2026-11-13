@@ -19,12 +19,14 @@ The app plays video through libmpv, which comes from the system rather than from
 
 ```sh
 sudo apt install libmpv2   # Ubuntu / Debian
-uv run gamevids-ui         # takes --db like the CLI
+uv run gamevids-ui         # takes --db and --config like the CLI
 ```
 
 **Add a game** with *Add Game…* (Ctrl+N). Pick the game's folder or its files (more can be added before saving). The files are grouped by camera as `gamevids probe` would, D-zone exports are skipped, and the title and date are filled in from the folder name and the files. A file with no camera serial (an older re-encode, say) gets a row of its own: put it on a camera or leave it out, check its period, and set its start time. When the file lost its start time too, putting it on a camera with other files suggests a start from the camera's timecode. The same works from the command line with `gamevids game add --assign FILE CAMERA [--start FILE HH:MM:SS]`.
 
 Pick a game on the left to play its first camera. Each camera's files play back-to-back as one timeline: thin ticks on the seek bar mark where the camera split a file, and heavy marks show where it was stopped and restarted (the gap is cut out). Switching cameras keeps the same moment on the wall clock. The keys are listed under the player.
+
+**Draw the D-zones** on the *D-Zones* tab (Alt+2; a new game opens there). Each camera shows a still frame with its zone over it. A camera with no zone yet starts from the nearest game's zone (the same camera if it was there), or from a default shape for the first game, so it usually needs only a nudge. Drag corners to move them, double-click an edge to add one, right-click a corner to remove it, or *Redraw* to place the corners one by one. *Another Frame* shows a different moment if players hide the ice. *Save and Scan* (Ctrl+S) saves the zone, starts that camera's scan in the background and moves on to the next camera, so you can draw it while the first one scans. Scans run one at a time (at about 8× real time here) and show their progress under the frame and in the status bar. When a scan finishes, the camera's candidate clips are found with the `[detect]` settings below, unless some of its clips were already triaged; those are kept, and `gamevids detect --force` replaces them. Quitting during a scan stops it, and nothing partial is saved.
 
 ## Settings
 

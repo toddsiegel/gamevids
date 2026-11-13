@@ -7,6 +7,7 @@ fits any resolution. On the command line a polygon is written as
 
 import json
 import sqlite3
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -90,3 +91,55 @@ def save_zone(conn: sqlite3.Connection, camera_id: int, points: Polygon) -> None
 def load_zone(conn: sqlite3.Connection, camera_id: int) -> Polygon | None:
     row = conn.execute("SELECT polygon FROM zone WHERE camera_id = ?", (camera_id,)).fetchone()
     return polygon_from_json(row["polygon"]) if row else None
+
+
+# A starting point when no other game has a zone: the ice from the near boards
+# out past the faceoff dots, as the cameras behind the nets usually see it.
+DEFAULT_ZONE: Polygon = ((0, 0.55), (0.26, 0.46), (0.74, 0.47), (1, 0.58), (1, 1), (0, 1))
+
+
+@dataclass(frozen=True)
+class Suggestion:
+    polygon: Polygon
+    game_id: int | None  # the game it came from; None for DEFAULT_ZONE
+    label: str | None  # the camera there it came from
+
+
+def suggest_zone(conn: sqlite3.Connection, camera_id: int) -> Suggestion:
+    """A zone to start camera `camera_id` from, when it has none of its own.
+
+    Rinks are the same size and the cameras sit in about the same spot, so the
+    zone comes from the nearest game in time that has one: the latest game on
+    or before this one's date, else the earliest after it. Within that game,
+    the same camera (by serial) is preferred, then the same label, then any.
+    """
+    this = conn.execute(
+        "SELECT c.game_id, c.serial, c.label, g.date FROM camera c"
+        " JOIN game g ON g.id = c.game_id WHERE c.id = ?",
+        (camera_id,),
+    ).fetchone()
+    if this is None:
+        raise ZoneError(f"no camera {camera_id}")
+    rows = conn.execute(
+        "SELECT g.id AS game_id, g.date, c.serial, c.label, z.polygon FROM zone z"
+        " JOIN camera c ON c.id = z.camera_id JOIN game g ON g.id = c.game_id"
+        " WHERE g.id != ?",
+        (this["game_id"],),
+    ).fetchall()
+    if not rows:
+        return Suggestion(DEFAULT_ZONE, None, None)
+
+    def nearness(row: sqlite3.Row) -> tuple:
+        before = row["date"] <= this["date"]
+        # Earlier games first, latest of them first; then later games, earliest first.
+        when = (0, _negated(row["date"]), -row["game_id"]) if before else (1, row["date"], 0)
+        same_serial = this["serial"] is not None and row["serial"] == this["serial"]
+        return (*when, not same_serial, row["label"] != this["label"], row["label"])
+
+    best = min(rows, key=nearness)
+    return Suggestion(polygon_from_json(best["polygon"]), best["game_id"], best["label"])
+
+
+def _negated(day: str) -> tuple[int, ...]:
+    """Sorts ISO dates newest first."""
+    return tuple(-int(part) for part in day.split("-"))

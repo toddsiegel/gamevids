@@ -9,6 +9,7 @@ from gamevids.activity import ActivityCurve, ScanSettings
 from gamevids.detect import (
     DetectError,
     DetectSettings,
+    detect_after_scan,
     detect_clips,
     load_clips,
     load_detection,
@@ -179,3 +180,16 @@ def test_triaged_clips_are_only_replaced_when_asked(conn, triage):
 
     save_clips(conn, 1, [], PLAIN, curve, replace_triaged=True)
     assert load_clips(conn, 1) == []
+
+
+def test_a_new_scan_finds_clips_unless_some_were_triaged(conn):
+    curve = make_curve(60, bursts=[(10, 15, 0.2), (30, 35, 0.06)])
+
+    assert len(detect_after_scan(conn, 1, curve, PLAIN)) == 2
+    assert len(load_clips(conn, 1)) == 2
+
+    with conn:
+        conn.execute("UPDATE clip SET status = 'kept' WHERE id = 1")
+    rescanned = make_curve(60, bursts=[(40, 45, 0.2)])
+    assert detect_after_scan(conn, 1, rescanned, PLAIN) is None
+    assert len(load_clips(conn, 1)) == 2

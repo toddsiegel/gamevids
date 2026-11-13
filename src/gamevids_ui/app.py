@@ -5,7 +5,8 @@ import sys
 from contextlib import closing
 from pathlib import Path
 
-from gamevids import __version__, db
+from gamevids import __version__, config, db
+from gamevids.config import ConfigError, load_config
 
 NO_LIBMPV = (
     "gamevids-ui needs libmpv to play video, and it isn't installed.\n"
@@ -24,11 +25,22 @@ def build_parser() -> argparse.ArgumentParser:
         default=db.default_path(),
         help=f"library database (default: ${db.DB_ENV}, else %(default)s)",
     )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=config.default_path(),
+        help=f"settings file (default: ${config.CONFIG_ENV}, else %(default)s)",
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args, qt_args = build_parser().parse_known_args(argv)
+    try:
+        settings = load_config(args.config)
+    except ConfigError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
     try:
         import mpv  # noqa: F401  (fails here, with a clear message, when libmpv is missing)
     except OSError:
@@ -42,7 +54,7 @@ def main(argv: list[str] | None = None) -> int:
     app = QApplication([sys.argv[0], *qt_args])
     app.setApplicationName("Game Vids")
     with closing(db.connect(args.db)) as conn:
-        window = MainWindow(conn)
+        window = MainWindow(conn, settings)
         window.resize(1440, 900)
         window.show()
         return app.exec()
