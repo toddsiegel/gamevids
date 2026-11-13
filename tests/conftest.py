@@ -23,6 +23,7 @@ def make_info(
     duration: float = 600.0,
     serial: str | None = "CAMA",
     size: int = 1_000_000_000,
+    timecode: str | None = None,
 ) -> MediaInfo:
     """A probed file whose start is `start` seconds after GAME_START (None = unknown)."""
     return MediaInfo(
@@ -37,6 +38,7 @@ def make_info(
         creation_time=None if start is None else GAME_START + timedelta(seconds=start),
         encoder="DJI OsmoAction5 Pro",
         serial=serial,
+        timecode=timecode,
     )
 
 

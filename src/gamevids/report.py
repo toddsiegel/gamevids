@@ -23,16 +23,18 @@ def clock(moment: datetime) -> str:
     return moment.astimezone().strftime("%H:%M:%S")
 
 
-def _format(info: MediaInfo) -> str:
+def media_format(info: MediaInfo) -> str:
+    """e.g. `1920x1080 @ 119.88 fps, hevc + aac`"""
     fps = float(info.fps)
     audio = f" + {info.audio_codec}" if info.audio_codec else ", no audio"
     return f"{info.width}x{info.height} @ {fps:.2f} fps, {info.video_codec}{audio}"
 
 
-def _period(chapter: Chapter) -> str:
-    if chapter.period is None:
+def period_name(period: str | None) -> str:
+    """A file's period as shown: `P1`, `P2`, `OT`, or blank."""
+    if period is None:
         return ""
-    return chapter.period if chapter.period == "OT" else f"P{chapter.period}"
+    return period if period == "OT" else f"P{period}"
 
 
 def _row(camera: str, chapter: Chapter, note: str = "", *, timed: bool = True) -> tuple:
@@ -40,7 +42,7 @@ def _row(camera: str, chapter: Chapter, note: str = "", *, timed: bool = True) -
         note = ", ".join(n for n in (note, "renamed") if n)
     start, end = (clock(chapter.start), clock(chapter.end)) if timed else ("", "")
     length = hms(chapter.file.duration)
-    return (camera, start, end, length, _period(chapter), note, chapter.file.path.name)
+    return (camera, start, end, length, period_name(chapter.period), note, chapter.file.path.name)
 
 
 def table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> list[str]:
@@ -76,7 +78,7 @@ def format_grouping(grouping: Grouping, heading: list[str] | None = None) -> str
     if grouping.cameras:
         lines += ["", "Cameras:"]
         for camera in grouping.cameras:
-            formats = "; ".join(sorted({_format(c.file) for c in camera.chapters}))
+            formats = "; ".join(sorted({media_format(c.file) for c in camera.chapters}))
             footage = f"{hms(camera.duration)} of footage"
             lines.append(f"  {camera.label}  {camera.serial}  {footage}  {formats}")
     if grouping.unassigned:

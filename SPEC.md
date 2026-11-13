@@ -80,18 +80,18 @@ Later phases add Label, Tag, ShotEvent, Reel, Share, etc. as new tables, without
 
 ## 4. Build plan — small, testable steps
 
-Each step ends with something you can run and check yourself. Steps 1–6 and 14 are core and CLI only; the UI starts at step 7.
+Each step ends with something you can run and check yourself. Steps 1–6 and 14 are core and CLI only; the UI starts at step 7. Finished steps are marked ✅.
 
 | # | Step | How you test it |
 |---|---|---|
-| 1 | **Project skeleton.** `uv` project, `gamevids` and `gamevids_ui` packages, `pytest`, `ruff`, a `gamevids --version` CLI. | `uv run gamevids --version`; `uv run pytest` passes. |
-| 2 | **Probe and group files.** Read duration, fps, codec, `creation_time` and DJI serial; group files by camera; order and stitch chapters; detect legacy period-split files. | `gamevids probe "<game folder>"` prints cameras, chapters and stitched durations for a DJI game and a legacy game. |
-| 3 | **Database and games.** SQLite schema and migrations; create a game from files plus a title, list games, show a game, rename a game (title and/or date), remove a game. Files with no serial are refused (or left out with `--skip-unassigned`) until step 8 adds hand assignment. | `gamevids game add --title "…" <files>`, then `gamevids game list` / `game show` / `game rename` / `game remove`. |
-| 4 | **Activity scan.** VA-API decode at low resolution, polygon mask (polygon passed as an argument for now), frame differencing, store the curve, progress output. | `gamevids scan <game>` finishes a full camera in minutes and writes a PNG plot of the activity curve to eyeball. |
-| 5 | **Clip detection.** Turn the curve into candidate clips with the fixed settings (threshold, minimum duration, merge gap, padding). | `gamevids detect <game>` lists clips. |
-| 6 | **Period proposals.** Find intermission lulls on each camera's curve and propose period starts; set son's end for P1 and alternate. | `gamevids periods <game>` prints proposed breaks to check against the video. |
-| 7 | **App shell and player.** Qt window, game list, embedded mpv playing a stitched camera timeline. | Open a game, scrub smoothly, play across a chapter boundary with no hiccup. |
-| 8 | **Add Game screen.** File picker, the grouping from step 2 shown for confirmation, title entry with the date prefilled, legacy files assigned to a camera/period by hand. | Add a real game entirely from the UI. |
+| 1 ✅ | **Project skeleton.** `uv` project, `gamevids` and `gamevids_ui` packages, `pytest`, `ruff`, a `gamevids --version` CLI. | `uv run gamevids --version`; `uv run pytest` passes. |
+| 2 ✅ | **Probe and group files.** Read duration, fps, codec, `creation_time` and DJI serial; group files by camera; order and stitch chapters; detect legacy period-split files. | `gamevids probe "<game folder>"` prints cameras, chapters and stitched durations for a DJI game and a legacy game. |
+| 3 ✅ | **Database and games.** SQLite schema and migrations; create a game from files plus a title, list games, show a game, rename a game (title and/or date), remove a game. Files with no serial are refused (or left out with `--skip-unassigned`) until step 8 adds hand assignment. | `gamevids game add --title "…" <files>`, then `gamevids game list` / `game show` / `game rename` / `game remove`. |
+| 4 ✅ | **Activity scan.** VA-API decode at low resolution, polygon mask (polygon passed as an argument for now), frame differencing, store the curve, progress output. | `gamevids scan <game>` finishes a full camera in minutes and writes a PNG plot of the activity curve to eyeball. |
+| 5 ✅ | **Clip detection.** Turn the curve into candidate clips with the fixed settings (threshold, minimum duration, merge gap, padding). | `gamevids detect <game>` lists clips. |
+| 6 ✅ | **Period proposals.** Find intermission lulls on each camera's curve and propose period starts; set son's end for P1 and alternate. | `gamevids periods <game>` prints proposed breaks to check against the video. |
+| 7 ✅ | **App shell and player.** Qt window, game list, embedded mpv playing a stitched camera timeline. | Open a game, scrub smoothly, play across a chapter boundary with no hiccup. |
+| 8 ✅ | **Add Game screen.** File picker, the grouping from step 2 shown for confirmation, title entry with the date prefilled, legacy files assigned to a camera/period by hand. | Add a real game entirely from the UI. |
 | 9 | **D-zone editor.** Polygon drawing on a still frame per camera, prefilled from the previous game; save it, then start the scan in the background with a progress display. | Draw zones for both cameras and watch both scans complete. |
 | 10 | **Period timeline.** Activity curves for both cameras on one timeline, draggable period markers from step 6, son's-end picker. | Confirm the periods for a real game and click a marker to jump the player there. |
 | 11 | **Triage screen.** Candidate list plus player, auto-play at 2×, keep/discard/trim/star/undo keys, saved progress. | Triage a full game by keyboard, quit partway, and resume where you left off. |

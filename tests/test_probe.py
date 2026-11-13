@@ -20,6 +20,7 @@ def ffprobe_output(**format_tags) -> dict:
                 "height": 1080,
                 "duration": "2496.56",
                 "disposition": {"attached_pic": 0},
+                "tags": {"timecode": "11:47:48;14"},
             },
             {"index": 1, "codec_type": "audio", "codec_name": "aac"},
             {"index": 2, "codec_type": "data", "codec_tag_string": "djmd"},
@@ -52,6 +53,7 @@ def test_parse_dji_original():
     assert info.duration == pytest.approx(2496.560733)
     assert info.size == 17191877994
     assert info.creation_time == datetime(2026, 10, 24, 17, 54, 48, tzinfo=UTC)
+    assert info.timecode == "11:47:48;14"
 
 
 def test_parse_remuxed_file_without_metadata():
@@ -62,6 +64,7 @@ def test_parse_remuxed_file_without_metadata():
 
     assert parsed.djmd_stream is None
     assert parsed.info.creation_time is None
+    assert parsed.info.timecode == "11:47:48;14"  # kept, and the only clue to the start
 
 
 def test_parse_rejects_file_without_video():

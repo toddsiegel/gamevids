@@ -113,6 +113,10 @@ MIGRATIONS = [
         PRIMARY KEY (game_id, number)
     );
     """,
+    # 5: camera timecodes, which place a file that lost its creation time
+    """
+    ALTER TABLE source_file ADD COLUMN timecode TEXT;
+    """,
 ]
 
 

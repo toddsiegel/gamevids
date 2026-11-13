@@ -57,25 +57,18 @@ def add_game(
         raise GameError("the game needs a title")
     if grouping.unassigned:
         names = ", ".join(c.file.path.name for c in grouping.unassigned)
-        raise GameError(f"files with no camera serial can't be added yet: {names}")
+        raise GameError(f"files with no camera serial need a camera first: {names}")
     if not grouping.cameras:
         raise GameError("no files with a camera serial to add")
 
-    paths = {str(c.file.path.resolve()): c for cam in grouping.cameras for c in cam.chapters}
-    placeholders = ", ".join("?" * len(paths))
-    taken = conn.execute(
-        "SELECT f.path, g.id, g.title FROM source_file f"
-        " JOIN camera c ON c.id = f.camera_id JOIN game g ON g.id = c.game_id"
-        f" WHERE f.path IN ({placeholders}) ORDER BY g.id, f.path",
-        list(paths),
-    ).fetchall()
-    if taken:
+    paths = [c.file.path for cam in grouping.cameras for c in cam.chapters]
+    if taken := files_in_library(conn, paths):
         lines = []
-        for r in taken:
-            heading = f"already in game {r['id']} ({r['title']}):"
+        for path, (game_id, game_title) in sorted(taken.items(), key=lambda t: (t[1][0], t[0])):
+            heading = f"already in game {game_id} ({game_title}):"
             if heading not in lines:
                 lines.append(heading)
-            lines.append(f"  {Path(r['path']).name}")
+            lines.append(f"  {path.name}")
         raise GameError("\n".join(lines))
 
     assert grouping.date is not None
@@ -99,6 +92,21 @@ def add_game(
     return game_id
 
 
+def files_in_library(conn: sqlite3.Connection, paths: list[Path]) -> dict[Path, tuple[int, str]]:
+    """The id and title of the game each of `paths` already belongs to, for those that do."""
+    by_resolved = {str(p.resolve()): p for p in paths}
+    if not by_resolved:
+        return {}
+    placeholders = ", ".join("?" * len(by_resolved))
+    rows = conn.execute(
+        "SELECT f.path, g.id, g.title FROM source_file f"
+        " JOIN camera c ON c.id = f.camera_id JOIN game g ON g.id = c.game_id"
+        f" WHERE f.path IN ({placeholders})",
+        list(by_resolved),
+    ).fetchall()
+    return {by_resolved[r["path"]]: (r["id"], r["title"]) for r in rows}
+
+
 def _insert_file(
     conn: sqlite3.Connection, camera_id: int, position: int, recording: int, chapter: Chapter
 ) -> None:
@@ -120,6 +128,7 @@ def _insert_file(
         "audio_codec": info.audio_codec,
         "encoder": info.encoder,
         "period": chapter.period,
+        "timecode": info.timecode,
     }
     names = ", ".join(columns)
     placeholders = ", ".join(f":{name}" for name in columns)
@@ -203,6 +212,7 @@ def _chapter(row: sqlite3.Row, serial: str | None) -> Chapter:
         creation_time=datetime.fromisoformat(stated) if stated else None,
         encoder=row["encoder"],
         serial=serial,
+        timecode=row["timecode"],
     )
     kind, _ = classify_name(path.name)
     return Chapter(info, datetime.fromisoformat(row["start"]), kind, row["period"])

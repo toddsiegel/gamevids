@@ -22,6 +22,8 @@ sudo apt install libmpv2   # Ubuntu / Debian
 uv run gamevids-ui         # takes --db like the CLI
 ```
 
+**Add a game** with *Add Game…* (Ctrl+N). Pick the game's folder or its files (more can be added before saving). The files are grouped by camera as `gamevids probe` would, D-zone exports are skipped, and the title and date are filled in from the folder name and the files. A file with no camera serial (an older re-encode, say) gets a row of its own: put it on a camera or leave it out, check its period, and set its start time. When the file lost its start time too, putting it on a camera with other files suggests a start from the camera's timecode. The same works from the command line with `gamevids game add --assign FILE CAMERA [--start FILE HH:MM:SS]`.
+
 Pick a game on the left to play its first camera. Each camera's files play back-to-back as one timeline: thin ticks on the seek bar mark where the camera split a file, and heavy marks show where it was stopped and restarted (the gap is cut out). Switching cameras keeps the same moment on the wall clock. The keys are listed under the player.
 
 ## Settings

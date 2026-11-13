@@ -163,6 +163,58 @@ def test_game_add_refuses_files_without_a_serial_unless_told(game_folder, monkey
     assert "Skipping files with no camera serial" in capsys.readouterr().err
 
 
+@pytest.fixture
+def legacy_folder(tmp_path, monkeypatch):
+    """One camera's 3rd period, plus a 1st period that lost its serial and creation time."""
+    folder = tmp_path / "2026-09-26 @ Arapahoe Maize"
+    folder.mkdir()
+    infos = {
+        "3rd Period.mp4": make_info("x", start=3000, timecode="09:55:04;18"),
+        "1st Period.mp4": make_info("x", start=None, serial=None, timecode="09:05:51;006"),
+    }
+    for name in infos:
+        (folder / name).touch()
+    monkeypatch.setattr(
+        "gamevids.cli.probe_file", lambda path: replace(infos[path.name], path=path)
+    )
+    return folder
+
+
+def test_game_add_places_an_assigned_file_by_its_timecode(legacy_folder, denver, capsys):
+    args = ["game", "add", "--title", "t", "--assign", "1st Period.mp4", "a", str(legacy_folder)]
+    assert main(args) == 0
+    captured = capsys.readouterr()
+    assert "Placing 1st Period.mp4 at 11:54:33, from its timecode." in captured.err
+    rows = [line.split() for line in captured.out.splitlines() if line.startswith("A ")]
+    assert [row[:2] + row[-2:] for row in rows] == [
+        ["A", "11:54:33", "1st", "Period.mp4"],
+        ["A", "12:43:46", "3rd", "Period.mp4"],
+    ]
+
+
+def test_game_add_takes_a_start_time_by_hand(legacy_folder, denver, capsys):
+    first = str(legacy_folder / "1st Period.mp4")
+    args = ["game", "add", "--title", "t", "--assign", first, "B", "--start", first, "11:30"]
+    assert main([*args, str(legacy_folder)]) == 0
+    out = capsys.readouterr().out
+    assert any(line.split()[:2] == ["B", "11:30:00"] for line in out.splitlines())
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (["--assign", "1st Period.mp4", "B"], "camera B has no timecode"),
+        (["--assign", "3rd Period.mp4", "A"], "not one of the files with no camera serial"),
+        (["--start", "1st Period.mp4", "11:30"], "--start needs --assign"),
+        (["--assign", "1st Period.mp4", "A", "--start", "1st Period.mp4", "noon"], "isn't a time"),
+        (["--assign", "1st Period.mp4", "AA"], "isn't a letter"),
+    ],
+)
+def test_game_add_refuses_bad_assignments(legacy_folder, capsys, args, message):
+    assert main(["game", "add", "--title", "t", *args, str(legacy_folder)]) == 1
+    assert message in capsys.readouterr().err
+
+
 def test_game_add_uses_the_library_option(game_folder, tmp_path, capsys):
     path = tmp_path / "other.db"
     assert main(["--db", str(path), "game", "add", "--title", "t", str(game_folder)]) == 0

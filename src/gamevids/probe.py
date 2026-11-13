@@ -35,6 +35,7 @@ class MediaInfo:
     creation_time: datetime | None  # UTC, 1-second resolution
     encoder: str | None
     serial: str | None  # DJI camera serial, when the metadata stream survived
+    timecode: str | None = None  # camera timecode of the first frame, e.g. "09:05:51;006"
 
 
 @dataclass(frozen=True)
@@ -71,6 +72,10 @@ def parse_ffprobe(data: dict, path: Path) -> _Parsed:
     )
 
     created = tags.get("creation_time") or video.get("tags", {}).get("creation_time")
+    timecode = next(
+        (s["tags"]["timecode"] for s in [video, *streams] if s.get("tags", {}).get("timecode")),
+        tags.get("timecode"),
+    )
     info = MediaInfo(
         path=path,
         duration=float(fmt.get("duration") or video["duration"]),
@@ -83,6 +88,7 @@ def parse_ffprobe(data: dict, path: Path) -> _Parsed:
         creation_time=datetime.fromisoformat(created) if created else None,
         encoder=tags.get("encoder"),
         serial=None,
+        timecode=timecode,
     )
     return _Parsed(info=info, djmd_stream=djmd)
 

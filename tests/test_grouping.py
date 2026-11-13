@@ -1,9 +1,19 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
+from pathlib import Path
 
 import pytest
 from conftest import FULL_CHAPTER, GAME_START, make_info
 
-from gamevids.grouping import FileKind, classify_name, group_files
+from gamevids.grouping import (
+    Assignment,
+    FileKind,
+    GroupingError,
+    assign_files,
+    classify_name,
+    estimate_start,
+    group_files,
+    timecode_seconds,
+)
 
 
 @pytest.mark.parametrize(
@@ -93,3 +103,108 @@ def test_overlapping_files_on_one_camera_are_flagged():
     assert grouping.warnings == [
         "b.mp4 starts 300s before the previous file on the same camera ends"
     ]
+
+
+def at(seconds: float) -> datetime:
+    return GAME_START + timedelta(seconds=seconds)
+
+
+def test_assigned_files_join_a_camera_with_their_hand_set_period_and_start():
+    third = make_info("Game - 3rd Period.mp4", start=3000)
+    first = make_info("Game - 1st Period.mp4", start=None, serial=None)
+    grouping = group_files([third, first])
+
+    placed = assign_files(grouping, {first.path: Assignment("a", "2", at(0))})
+
+    (camera,) = placed.cameras
+    assert (camera.label, camera.serial) == ("A", "CAMA")
+    assert [(c.file, c.start, c.period) for c in camera.chapters] == [
+        (first, at(0), "2"),
+        (third, at(3000), "3"),
+    ]
+    assert len(camera.recordings) == 2
+    assert placed.unassigned == []
+    assert grouping.unassigned  # the original grouping is left alone
+
+
+def test_a_new_letter_makes_a_camera_with_no_serial():
+    a = make_info("a.MP4", duration=1000, size=FULL_CHAPTER)
+    loose = make_info("b - 2nd Period.mp4", start=900, serial=None)
+    kept_out = make_info("c - 3rd Period.mp4", start=2000, serial=None)
+
+    placed = assign_files(group_files([a, loose, kept_out]), {loose.path: Assignment("B", "2")})
+
+    assert [(c.label, c.serial) for c in placed.cameras] == [("A", "CAMA"), ("B", None)]
+    assert placed.cameras[1].start == at(900)  # from the file's own creation time
+    assert [c.file for c in placed.unassigned] == [kept_out]
+
+
+def test_an_assigned_file_can_be_the_next_chapter():
+    # A camera split, with the second chapter re-saved without its serial.
+    first = make_info("a.MP4", duration=1000, size=FULL_CHAPTER)
+    second = make_info("b.MP4", start=1002, serial=None)
+
+    (camera,) = assign_files(
+        group_files([first, second]), {second.path: Assignment("A", None)}
+    ).cameras
+
+    assert len(camera.recordings) == 1
+    assert camera.chapters[1].start == at(1000)
+
+
+@pytest.mark.parametrize(
+    ("assignment", "message"),
+    [
+        (Assignment("A", "1"), "has no start time"),
+        (Assignment("AB", "1", GAME_START), "isn't a letter"),
+        (Assignment("A", "1", datetime(2026, 10, 24, 11)), "time zone"),
+    ],
+)
+def test_assign_files_rejects(assignment, message):
+    loose = make_info("x - 1st Period.mp4", start=None, serial=None)
+    with pytest.raises(GroupingError, match=message):
+        assign_files(group_files([make_info("a.MP4"), loose]), {loose.path: assignment})
+
+
+def test_only_files_without_a_serial_can_be_assigned():
+    a = make_info("a.MP4")
+    with pytest.raises(GroupingError, match="a.MP4"):
+        assign_files(group_files([a]), {Path("/footage/a.MP4"): Assignment("B", None)})
+
+
+@pytest.mark.parametrize(
+    ("timecode", "seconds"),
+    [
+        ("09:05:51;006", 9 * 3600 + 5 * 60 + 51 + 6 / 120),
+        ("17:56:59;30", 17 * 3600 + 56 * 60 + 59 + 30 / 120),
+        ("00:00:01:00", 1.0),
+        (None, None),
+        ("garbled", None),
+    ],
+)
+def test_timecode_seconds(timecode, seconds):
+    seconds_read = timecode_seconds(make_info("a.MP4", timecode=timecode))
+    assert seconds_read == (pytest.approx(seconds) if seconds is not None else None)
+
+
+def test_start_is_estimated_from_timecode_on_the_same_camera():
+    # Measured on 2026-09-26: P3 at 15:43:12 local with timecode 09:55:04;18.
+    third = make_info("P3.mp4", start=3000, timecode="09:55:04;18")
+    first = make_info("P1.mp4", start=None, serial=None, timecode="09:05:51;006")
+    camera = group_files([third, first]).cameras[0]
+
+    assert estimate_start(first, camera) == at(3000 - 49 * 60 - 13)
+
+
+def test_estimate_wraps_at_midnight():
+    late = make_info("a.mp4", start=0, timecode="23:59:50;00")
+    after = make_info("b.mp4", start=None, serial=None, timecode="00:00:20;00")
+    camera = group_files([late, after]).cameras[0]
+
+    assert estimate_start(after, camera) == at(30)
+
+
+def test_no_estimate_without_timecodes():
+    camera = group_files([make_info("a.mp4")]).cameras[0]
+    assert estimate_start(make_info("b.mp4", timecode="01:00:00;00"), camera) is None
+    assert estimate_start(make_info("b.mp4"), camera) is None

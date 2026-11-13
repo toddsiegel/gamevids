@@ -4,8 +4,16 @@ import pytest
 from conftest import FULL_CHAPTER, GAME_START, make_info
 
 from gamevids import db
-from gamevids.games import GameError, add_game, list_games, load_game, remove_game, rename_game
-from gamevids.grouping import group_files
+from gamevids.games import (
+    GameError,
+    add_game,
+    files_in_library,
+    list_games,
+    load_game,
+    remove_game,
+    rename_game,
+)
+from gamevids.grouping import Assignment, assign_files, group_files
 
 
 @pytest.fixture
@@ -56,11 +64,36 @@ def test_a_file_can_only_belong_to_one_game(conn):
     assert len(list_games(conn)) == 1
 
 
+def test_files_in_library_names_each_files_game(conn):
+    grouping = two_camera_game()
+    add_game(conn, "first", grouping)
+    a1 = grouping.cameras[0].chapters[0].file.path
+
+    assert files_in_library(conn, [a1, a1.with_name("new.MP4")]) == {a1: (1, "first")}
+    assert files_in_library(conn, []) == {}
+
+
+def test_a_camera_made_by_hand_is_saved_with_its_timecodes(conn):
+    loose = make_info("P1.mp4", start=None, serial=None, timecode="09:05:51;006")
+    grouping = group_files([make_info("P3.mp4", start=3000), loose])
+    start = GAME_START + timedelta(seconds=10)
+    placed = assign_files(grouping, {loose.path: Assignment("B", "1", start)})
+
+    game = load_game(conn, add_game(conn, "t", placed))
+
+    camera = game.camera("B")
+    assert camera.serial is None
+    (chapter,) = camera.chapters
+    assert (chapter.start, chapter.period) == (start, "1")
+    assert chapter.file.creation_time is None
+    assert chapter.file.timecode == "09:05:51;006"
+
+
 @pytest.mark.parametrize(
     ("title", "files", "message"),
     [
         ("", [make_info("a.MP4")], "needs a title"),
-        ("t", [make_info("a - 1st Period.mp4", serial=None)], "no camera serial"),
+        ("t", [make_info("a - 1st Period.mp4", serial=None)], "need a camera first"),
         ("t", [make_info("a - 1st Period - D Zone.mp4")], "no files with a camera serial"),
     ],
 )

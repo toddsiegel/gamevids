@@ -6,7 +6,8 @@ import sys
 import time
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
-from datetime import date
+from datetime import date, datetime
+from datetime import time as dt_time
 from pathlib import Path
 
 from gamevids import __version__, config, db
@@ -24,7 +25,16 @@ from gamevids.games import (
     remove_game,
     rename_game,
 )
-from gamevids.grouping import Grouping, group_files
+from gamevids.grouping import (
+    Assignment,
+    Chapter,
+    Grouping,
+    GroupingError,
+    assign_files,
+    camera_label,
+    estimate_start,
+    group_files,
+)
 from gamevids.periods import (
     DEFAULT_COUNT,
     PeriodError,
@@ -81,14 +91,74 @@ def cmd_probe(args: argparse.Namespace) -> int:
     return 0
 
 
+def _local_time(text: str, day: date) -> datetime:
+    try:
+        of_day = dt_time.fromisoformat(text.strip())
+    except ValueError:
+        raise CommandError(f"{text!r} isn't a time; use HH:MM:SS, e.g. 14:53:59") from None
+    return datetime.combine(day, of_day).astimezone()
+
+
+def _find_unassigned(grouping: Grouping, name: str, flag: str) -> Chapter:
+    """The file with no serial that `name` (a file name or path) points at."""
+    for chapter in grouping.unassigned:
+        path = chapter.file.path
+        if name in (path.name, str(path)) or Path(name).resolve() == path.resolve():
+            return chapter
+    known = "".join(f"\n  {c.file.path.name}" for c in grouping.unassigned) or " none"
+    raise CommandError(f"{flag} {name}: not one of the files with no camera serial:{known}")
+
+
+def _assign(grouping: Grouping, args: argparse.Namespace) -> Grouping:
+    """Place the files named with --assign on cameras, at --start or their timecode."""
+    starts = {}
+    for name, text in args.start or []:
+        starts[_find_unassigned(grouping, name, "--start").file.path] = text
+    assignments = {}
+    cameras = {c.label: c for c in grouping.cameras}
+    for name, label in args.assign or []:
+        chapter = _find_unassigned(grouping, name, "--assign")
+        info = chapter.file
+        try:
+            label = camera_label(label)
+        except GroupingError as e:
+            raise CommandError(str(e)) from None
+        start = None
+        if info.path in starts:
+            known = grouping.date or info.creation_time
+            day = args.date or (known.astimezone().date() if known else date.today())
+            start = _local_time(starts.pop(info.path), day)
+        elif info.creation_time is None:
+            camera = cameras.get(label)
+            start = estimate_start(info, camera) if camera else None
+            if start is None:
+                raise CommandError(
+                    f"{info.path.name} has no start time, and camera {label} has no timecode "
+                    f"to place it by. Give one with --start {info.path.name!r} HH:MM:SS."
+                )
+            print(
+                f"Placing {info.path.name} at {clock(start)}, from its timecode.",
+                file=sys.stderr,
+            )
+        assignments[info.path] = Assignment(label, chapter.period, start)
+    if starts:
+        names = ", ".join(p.name for p in starts)
+        raise CommandError(f"--start needs --assign for the same file: {names}")
+    try:
+        return assign_files(grouping, assignments)
+    except GroupingError as e:
+        raise CommandError(str(e)) from None
+
+
 def cmd_game_add(args: argparse.Namespace) -> int:
-    grouping = _group(args.paths)
+    grouping = _assign(_group(args.paths), args)
     if grouping.unassigned:
         names = "".join(f"\n  {c.file.path.name}" for c in grouping.unassigned)
         if not args.skip_unassigned:
             raise CommandError(
                 f"These files have no camera serial:{names}\n"
-                "Leave them out, or pass --skip-unassigned to add the game without them."
+                "Place each on a camera with --assign FILE CAMERA, or pass --skip-unassigned "
+                "to add the game without them."
             )
         print(f"Skipping files with no camera serial:{names}", file=sys.stderr)
         grouping.unassigned = []
@@ -450,6 +520,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--date",
         type=date.fromisoformat,
         help="game date as YYYY-MM-DD (default: from the files)",
+    )
+    add.add_argument(
+        "--assign",
+        nargs=2,
+        action="append",
+        metavar=("FILE", "CAMERA"),
+        help="put a file with no camera serial on camera A, B, ... (a new letter makes a new "
+        "camera); a file with no start time is placed by its timecode",
+    )
+    add.add_argument(
+        "--start",
+        nargs=2,
+        action="append",
+        metavar=("FILE", "HH:MM:SS"),
+        help="local start time for a file given with --assign, on the game date",
     )
     add.add_argument(
         "--skip-unassigned",
