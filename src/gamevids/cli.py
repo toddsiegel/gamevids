@@ -59,8 +59,10 @@ from gamevids.report import (
     format_grouping,
     format_period_settings,
     format_periods,
+    format_triage,
     hms,
 )
+from gamevids.triage import load_triage
 from gamevids.zones import ZoneError, load_zone, parse_polygon, save_zone
 
 ZONE_HELP = (
@@ -466,6 +468,28 @@ def cmd_periods(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_triage(args: argparse.Namespace) -> int:
+    with _open(args) as conn:
+        game = load_game(conn, args.game)
+        triage = load_triage(conn, game)
+        if triage.missing == "clips":
+            raise CommandError(
+                f"Game {game.id} has no clips yet. Run `gamevids scan {game.id}`, then "
+                f"`gamevids detect {game.id}`, to find them."
+            )
+        if triage.missing == "periods":
+            raise CommandError(
+                f"Game {game.id} has no periods yet. Run `gamevids periods {game.id}` first."
+            )
+        if triage.missing == "goalie":
+            raise CommandError(
+                "Our goalie's end isn't chosen, so their clips aren't known. "
+                f"Run `gamevids periods {game.id} --goalie CAM` first."
+            )
+        print(format_triage(game, triage))
+    return 0
+
+
 def _period_time(text: str) -> tuple[int, str]:
     """`P2=12:15:30` as `(2, "12:15:30")`; the time is checked against the game later."""
     name, sep, value = text.partition("=")
@@ -671,6 +695,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--plot", type=Path, help="where to write the PNG (default: game-<id>-activity.png)"
     )
     periods.set_defaults(handler=cmd_periods)
+
+    triage = commands.add_parser(
+        "triage",
+        help="list our goalie's clips and how far triage has got",
+        description="List the clips that start on the camera behind our goalie's net in "
+        "each period, in the order the Triage tab plays them, with each one's status, star "
+        "and trim, and the clip triage resumes at.",
+    )
+    triage.add_argument("game", type=int, help="game id, from `gamevids game list`")
+    triage.set_defaults(handler=cmd_triage)
 
     return parser
 

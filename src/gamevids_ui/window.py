@@ -25,6 +25,7 @@ from gamevids_ui.add_game import AddGameDialog
 from gamevids_ui.periods_page import PeriodsPage
 from gamevids_ui.player import Player
 from gamevids_ui.scans import ScanQueue
+from gamevids_ui.triage_page import TriagePage
 from gamevids_ui.zones_page import ZonesPage
 
 GAME_ID = Qt.ItemDataRole.UserRole
@@ -59,11 +60,13 @@ class MainWindow(QMainWindow):
         self.player = Player()
         self.zones = ZonesPage(conn, self.scans)
         self.periods = PeriodsPage(conn, self.scans, settings=config.periods)
+        self.triage = TriagePage(conn)
         self.pages = QTabWidget()
         self.pages.setDocumentMode(True)
         self.pages.addTab(self.player, "Watch")
         self.pages.addTab(self.zones, "D-Zones")
         self.pages.addTab(self.periods, "Periods")
+        self.pages.addTab(self.triage, "Triage")
         self.pages.currentChanged.connect(self._page_picked)
         for index in range(self.pages.count()):
             action = QAction(self)
@@ -115,23 +118,28 @@ class MainWindow(QMainWindow):
             self.player.clear(str(e))
             self.zones.clear()
             self.periods.clear(str(e))
+            self.triage.clear(str(e))
             return
         self.setWindowTitle(f"{game.title} — Game Vids")
         self.player.set_game(game)
         self.zones.set_game(game)
         self.periods.set_game(game)
+        self.triage.set_game(game)
         if self.pages.currentWidget() is self.player:
             self.player.video.setFocus()
 
     def _page_picked(self, _index: int) -> None:
         page = self.pages.currentWidget()
-        for player in (self.player, self.periods.player):
+        for player in (self.player, self.periods.player, self.triage.player):
             if not page.isAncestorOf(player):
                 player.pause()  # only the page on screen plays
         if page is self.zones:
             self.zones.canvas.setFocus()
         elif page is self.periods:
             self.periods.player.video.setFocus()
+        elif page is self.triage:
+            self.triage.refresh()  # the periods may have changed which clips are ours
+            self.triage.player.video.setFocus()
 
     def _show_scan_status(self, _camera_id: int = 0) -> None:
         job = self.scans.running
@@ -165,5 +173,6 @@ class MainWindow(QMainWindow):
         self.scans.stop_all()
         self.zones.shutdown()
         self.periods.shutdown()
+        self.triage.shutdown()
         self.player.shutdown()
         super().closeEvent(event)

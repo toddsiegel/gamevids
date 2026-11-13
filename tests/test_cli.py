@@ -1,6 +1,7 @@
 import subprocess
 import sys
 from dataclasses import replace
+from datetime import timedelta
 
 import numpy as np
 import pytest
@@ -504,3 +505,41 @@ def test_periods_can_be_laid_out_by_hand_without_a_scan(clip_game, library, denv
     out = capsys.readouterr().out
     assert out.splitlines()[1].split()[:4] == ["P1", "11:53:46", "0:00:02", "A"]
     assert "Move a start" not in out
+
+
+def test_triage_lists_our_goalies_clips_and_where_triage_resumes(two_camera_game, capsys):
+    conn = two_camera_game
+    assert main(["triage", "1"]) == 1
+    assert "no clips yet. Run `gamevids scan 1`, then `gamevids detect 1`" in (
+        capsys.readouterr().err
+    )
+
+    assert main(["detect", "1"]) == 0
+    assert main(["triage", "1"]) == 1
+    assert "Game 1 has no periods yet. Run `gamevids periods 1` first." in capsys.readouterr().err
+
+    assert main(["periods", "1"]) == 0
+    assert main(["triage", "1"]) == 1
+    assert "Run `gamevids periods 1 --goalie CAM` first." in capsys.readouterr().err
+
+    assert main(["periods", "1", "--goalie", "A"]) == 0
+    first = conn.execute(
+        "SELECT id FROM clip WHERE camera_id = 1 AND start >= ? ORDER BY start",
+        ((GAME_START + timedelta(seconds=289)).isoformat(),),  # P1's start, 11:58:35
+    ).fetchone()[0]
+    with conn:
+        conn.execute("UPDATE clip SET status = 'kept', starred = 1 WHERE id = ?", (first,))
+    capsys.readouterr()
+
+    assert main(["triage", "1"]) == 0
+
+    lines = capsys.readouterr().out.splitlines()
+    header = ["#", "ID", "PERIOD", "CAM", "START", "LENGTH", "STATUS", "STAR", "TRIM"]
+    assert lines[0].split() == header
+    rows = [line.split() for line in lines[1 : lines.index("")]]
+    assert rows[0][1:3] == [str(first), "P1"] and rows[0][6:] == ["kept", "*"]
+    # P1 and P3 at camera A, P2 at camera B, in wall-clock order
+    assert {(r[2], r[3]) for r in rows} == {("P1", "A"), ("P2", "B"), ("P3", "A")}
+    assert [r[4] for r in rows] == sorted(r[4] for r in rows)
+    assert lines[-2].startswith(f"1 of {len(rows)} clips triaged: 1 kept (")
+    assert lines[-1].startswith("Next: #2 (clip ")

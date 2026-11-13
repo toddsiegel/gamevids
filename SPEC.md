@@ -28,8 +28,9 @@ A desktop app for turning full-game footage of a hockey goalie into short, watch
    - The app proposes breaks from intermission lulls and you drag to confirm.
    - You pick which camera is behind your son's net in P1; the app alternates ends for P2, P3 and OT (overridable per period).
    - Camera chapter splits are never treated as period breaks.
-5. **Triage** each candidate clip. Keyboard-first, mouse as secondary.
-   - Clips auto-play at 2× (adjustable). Keys: keep, discard, trim in/out, step frames, undo.
+5. **Triage** our goalie's candidate clips: those that start during a period on the camera behind our goalie's net, in wall-clock order. Warmup and far-end clips aren't triaged. Keyboard-first, mouse as secondary.
+   - Clips auto-play at 2× (adjustable) from the in point and pause at the out point. Keys: keep, discard, trim in/out, step frames, undo.
+   - Trimming can extend a clip up to 10 s past what detection found, within its recording.
    - Triage progress is saved, so it can be resumed later.
    - **⭐ star** (optional, per clip): marks a clip as a highlight. In this version stars are only saved, for the future highlights library. They don't change the game video.
 6. **Assemble** one video per game:
@@ -46,13 +47,13 @@ A desktop app for turning full-game footage of a hockey goalie into short, watch
 | Key | Action |
 |---|---|
 | Space | Play / pause |
-| J / K / L | Shuttle back / pause / forward |
+| J / K / L | Jump back 2 s / pause / play (again: faster) |
 | ← / → | Step one frame |
 | I / O | Set in / out point |
 | Enter | Keep and go to next |
 | X | Discard and go to next |
 | S | Toggle ⭐ |
-| U | Undo |
+| U (or Ctrl+Z) | Undo |
 | [ / ] | Playback speed down / up |
 
 ## 3. Architecture
@@ -73,7 +74,7 @@ A desktop app for turning full-game footage of a hockey goalie into short, watch
 - **Zone:** camera_id, polygon (normalized coordinates).
 - **ActivityCurve:** camera_id, sample rate, values (stored as a blob).
 - **Period:** game_id, number (1, 2, 3, OT…), start wall-clock, son's-end camera_id.
-- **Clip:** id, camera_id, source range (detected start/end), trim in/out, score, status (candidate/kept/discarded), starred, triage order.
+- **Clip:** id, camera_id, source range (detected start/end), trim in/out, score, status (candidate/kept/discarded), starred. Triage order is wall-clock order, so it isn't stored.
 - **Export:** game_id, path, settings, created_at.
 
 Later phases add Label, Tag, ShotEvent, Reel, Share, etc. as new tables, without changing these.
@@ -94,7 +95,7 @@ Each step ends with something you can run and check yourself. Steps 1–6 and 14
 | 8 ✅ | **Add Game screen.** File picker, the grouping from step 2 shown for confirmation, title entry with the date prefilled, legacy files assigned to a camera/period by hand. | Add a real game entirely from the UI. |
 | 9 ✅ | **D-zone editor.** Polygon drawing on a still frame per camera, prefilled from the previous game; save it, then start the scan in the background with a progress display. | Draw zones for both cameras and watch both scans complete. |
 | 10 ✅ | **Period timeline.** Activity curves for both cameras on one timeline, draggable period markers from step 6, son's-end picker. | Confirm the periods for a real game and click a marker to jump the player there. |
-| 11 | **Triage screen.** Candidate list plus player, auto-play at 2×, keep/discard/trim/star/undo keys, saved progress. | Triage a full game by keyboard, quit partway, and resume where you left off. |
+| 11 ✅ | **Triage screen.** Candidate list plus player, auto-play at 2×, keep/discard/trim/star/undo keys, saved progress. | Triage a full game by keyboard, quit partway, and resume where you left off. |
 | 12 | **Assemble and export.** Title card, chronological merge of both cameras, dip-to-black transitions, 1080p60 H.264 + AAC, progress, open the output folder. | Export a game and watch it on a phone or laptop. |
 | 13 | **End-to-end polish.** Run one new game and a few old games through the whole flow; fix rough edges. | One new game done start to finish. Check the time against the ~15 min target. |
 | 14 | **Detection benchmark (follow-up).** An eval command that compares detected clips to existing LosslessCut `.llc` cuts and reports recall and the clip count; use it to adjust the fixed detection defaults. | `gamevids eval <game> <file.llc>` shows how many of your hand cuts were caught. |
@@ -122,7 +123,7 @@ Each step ends with something you can run and check yourself. Steps 1–6 and 14
 - Detection settings are fixed in a config file for the first version and tuned with the step 14 eval against existing `.llc` cuts.
 - Clips reference the source files, so nothing is extracted to disk until export. When raw footage is later moved by hand, the app will ask for the new location (relink).
 - Existing games will eventually be reprocessed from their full-length files, not from the `D Zone` exports.
-- Both cameras are scanned and triaged. In the first version, far-end clips you keep appear in the game video in chronological order.
+- Both cameras are scanned, but only our goalie's clips are triaged. Since our goalie changes ends each period, the game video still draws on both cameras, in chronological order.
 
 ## 7. Possible follow-ups
 

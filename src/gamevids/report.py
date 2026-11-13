@@ -8,6 +8,7 @@ from gamevids.games import Game, GameSummary
 from gamevids.grouping import Chapter, FileKind, Grouping
 from gamevids.periods import Period, PeriodSettings, Proposal, period_ends
 from gamevids.probe import MediaInfo
+from gamevids.triage import Triage
 
 HEADERS = ("CAM", "START", "END", "LENGTH", "PERIOD", "NOTE", "FILE")
 
@@ -237,3 +238,56 @@ def format_period_settings(settings: PeriodSettings) -> str:
         f"periods at least {hms(settings.min_period)}, "
         f"warmup above {settings.warmup_level * 100:g}% for {_seconds(settings.min_warmup)}"
     )
+
+
+def _trim(clip: Clip) -> str:
+    """How far trimming moved a clip's edges, e.g. `in +1.5 s, out -2.0 s`."""
+    moves = []
+    if clip.trim_in is not None:
+        moves.append(f"in {(clip.trim_in - clip.start).total_seconds():+.1f} s")
+    if clip.trim_out is not None:
+        moves.append(f"out {(clip.trim_out - clip.end).total_seconds():+.1f} s")
+    return ", ".join(moves)
+
+
+def triage_summary(triage: Triage) -> str:
+    """e.g. `12 of 40 clips triaged: 8 kept (0:02:31, 3 starred), 4 discarded.`"""
+    kept = [c for c in triage.clips if c.status == "kept"]
+    discarded = sum(c.status == "discarded" for c in triage.clips)
+    starred = sum(c.starred for c in kept)
+    length = hms(sum(c.duration for c in kept))
+    return (
+        f"{triage.decided} of {_count(len(triage.clips), 'clip')} triaged: {len(kept)} kept "
+        f"({length}, {starred} starred), {discarded} discarded."
+    )
+
+
+def format_triage(game: Game, triage: Triage) -> str:
+    """Our goalie's clips in triage order, with what's been decided and what's next."""
+    labels = {camera_id: label for label, camera_id in game.camera_ids.items()}
+    if not triage.clips:
+        return "No clips at our goalie's end."
+    rows = [
+        (
+            str(number),
+            str(clip.id),
+            period.name,
+            labels.get(clip.camera_id, "?"),
+            clock(clip.in_point),
+            hms(clip.duration),
+            clip.status,
+            "*" if clip.starred else "",
+            _trim(clip),
+        )
+        for number, (clip, period) in enumerate(zip(triage.clips, triage.periods, strict=True), 1)
+    ]
+    headers = ("#", "ID", "PERIOD", "CAM", "START", "LENGTH", "STATUS", "STAR", "TRIM")
+    lines = table(headers, rows)
+
+    lines += ["", triage_summary(triage)]
+    if triage.current is not None:
+        lines.append(
+            f"Next: #{triage.index + 1} (clip {triage.current.id}) "
+            f"at {clock(triage.current.in_point)}."
+        )
+    return "\n".join(lines)

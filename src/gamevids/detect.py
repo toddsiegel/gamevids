@@ -136,8 +136,18 @@ class Clip:
     starred: bool
 
     @property
+    def in_point(self) -> datetime:
+        """Where the clip starts once trimmed."""
+        return self.trim_in or self.start
+
+    @property
+    def out_point(self) -> datetime:
+        """Where the clip ends once trimmed."""
+        return self.trim_out or self.end
+
+    @property
     def duration(self) -> float:
-        return ((self.trim_out or self.end) - (self.trim_in or self.start)).total_seconds()
+        return (self.out_point - self.in_point).total_seconds()
 
     @property
     def triaged(self) -> bool:
