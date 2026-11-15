@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from datetime import datetime
 
 from gamevids.detect import Clip, DetectSettings
-from gamevids.games import Game, GameSummary
+from gamevids.games import Game, GameContents, GameSummary
 from gamevids.grouping import Chapter, FileKind, Grouping
 from gamevids.periods import Period, PeriodSettings, Proposal, period_ends
 from gamevids.probe import MediaInfo
@@ -115,6 +115,43 @@ def format_game(game: Game) -> str:
 
 def _count(n: int, noun: str) -> str:
     return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
+
+
+def removal_items(contents: GameContents) -> list[str]:
+    """What removing a game deletes from the library, one line per kind of data."""
+    c = contents
+    items = [
+        f"{_count(c.cameras, 'camera')} and the list of their {_count(c.files, 'file')} "
+        f"({hms(c.footage)} of footage)"
+    ]
+    if c.zones:
+        items.append(f"D-zones drawn on {_count(c.zones, 'camera')}")
+    if c.scans:
+        items.append(f"Scans of {_count(c.scans, 'camera')}")
+    if c.clips:
+        decided = [
+            f"{c.kept} kept" if c.kept else "",
+            f"{c.discarded} discarded" if c.discarded else "",
+            f"{c.starred} starred" if c.starred else "",
+        ]
+        triage = ", ".join(d for d in decided if d) or "none triaged yet"
+        items.append(f"{_count(c.clips, 'clip')}: {triage}")
+    if c.periods:
+        items.append(_count(c.periods, "period"))
+    if c.exports:
+        items.append(f"The record of {_count(c.exports, 'export')}")
+    return items
+
+
+def removal_note(contents: GameContents) -> str:
+    """What removing a game leaves alone."""
+    if len(contents.folders) == 1:
+        note = f"The video files stay in {contents.folders[0]}"
+    else:
+        note = "The video files stay where they are"
+    if contents.exports:
+        note += ", and exported game videos stay where they were saved"
+    return note + "."
 
 
 def _seconds(value: float) -> str:

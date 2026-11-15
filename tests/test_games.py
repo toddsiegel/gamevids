@@ -1,19 +1,29 @@
+from dataclasses import replace
 from datetime import date, timedelta
+from pathlib import Path
 
 import pytest
-from conftest import FULL_CHAPTER, GAME_START, make_info
+from conftest import FULL_CHAPTER, GAME, GAME_START, make_info, make_play_curve
 
 from gamevids import db
+from gamevids.activity import save_curve
+from gamevids.detect import DEFAULT_SETTINGS, Segment, load_clips, save_clips
+from gamevids.export import ExportResult, save_export
 from gamevids.games import (
     GameError,
     add_game,
     files_in_library,
+    game_contents,
     list_games,
     load_game,
     remove_game,
     rename_game,
 )
 from gamevids.grouping import Assignment, assign_files, group_files
+from gamevids.periods import Period, save_periods
+from gamevids.report import removal_items, removal_note
+from gamevids.triage import save_triage
+from gamevids.zones import save_zone
 
 
 @pytest.fixture
@@ -123,6 +133,49 @@ def test_remove_game(conn):
         load_game(conn, game_id)
     with pytest.raises(GameError, match="no game 1"):
         remove_game(conn, game_id)
+
+
+def test_contents_say_what_removing_a_game_deletes(conn):
+    game_id = add_game(conn, "vs Lafayette", two_camera_game(), date(2026, 10, 24))
+    contents = game_contents(conn, game_id)
+    assert (contents.cameras, contents.files, contents.periods) == (2, 4, 0)
+    assert contents.folders == [Path("/footage/game")]
+    assert removal_items(contents) == [
+        "2 cameras and the list of their 4 files (1:25:25 of footage)"
+    ]
+    assert removal_note(contents) == "The video files stay in /footage/game."
+
+    a, b = load_game(conn, game_id).camera_ids.values()
+    at = GAME_START + timedelta(seconds=100)
+    save_zone(conn, a, ((0.1, 0.1), (0.9, 0.1), (0.5, 0.9)))
+    curve = make_play_curve(0, GAME)
+    save_curve(conn, a, curve)
+    segments = [
+        Segment(at + timedelta(seconds=s), at + timedelta(seconds=s + 5), 0.1) for s in (0, 50, 90)
+    ]
+    save_clips(conn, a, segments, DEFAULT_SETTINGS, curve)
+    first, second, _ = load_clips(conn, a)
+    save_triage(conn, replace(first, status="kept", starred=True))
+    save_triage(conn, replace(second, status="discarded"))
+    save_periods(conn, game_id, [Period(1, at, a), Period(2, at + timedelta(seconds=60), b)])
+    save_export(conn, game_id, ExportResult(Path("/videos/v.mp4"), 30.0, 1, 1, 1000))
+
+    contents = game_contents(conn, game_id)
+    assert (contents.zones, contents.scans, contents.clips) == (1, 1, 3)
+    assert (contents.kept, contents.discarded, contents.starred) == (1, 1, 1)
+    assert (contents.periods, contents.exports) == (2, 1)
+    assert removal_items(contents)[1:] == [
+        "D-zones drawn on 1 camera",
+        "Scans of 1 camera",
+        "3 clips: 1 kept, 1 discarded, 1 starred",
+        "2 periods",
+        "The record of 1 export",
+    ]
+    assert removal_note(contents).endswith(", and exported game videos stay where they were saved.")
+
+    remove_game(conn, game_id)
+    with pytest.raises(GameError, match="no game 1"):
+        game_contents(conn, game_id)
 
 
 def test_rename_game_changes_the_title_the_date_or_both(conn):

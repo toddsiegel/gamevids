@@ -1,7 +1,9 @@
 """The Qt app, run headless. Tests that need libmpv skip when it isn't installed."""
 
 import os
+import time
 from contextlib import closing
+from dataclasses import replace
 from datetime import date, timedelta
 
 import pytest
@@ -15,9 +17,10 @@ from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from gamevids import db  # noqa: E402
-from gamevids.games import add_game, load_game  # noqa: E402
+from gamevids.games import add_game, game_contents, list_games, load_game  # noqa: E402
 from gamevids.grouping import group_files  # noqa: E402
 from gamevids.probe import ProbeError  # noqa: E402
+from gamevids.report import removal_items  # noqa: E402
 from gamevids_ui.add_game import AddGameDialog  # noqa: E402
 from gamevids_ui.scrubber import MARGIN, Scrubber  # noqa: E402
 
@@ -167,6 +170,115 @@ def test_empty_library_says_how_to_add_a_game(window_class, library):
     with closing(db.connect(library)) as conn:
         window = window_class(conn)
         assert "Add Game" in window.player.message.text()
+
+
+def test_deleting_a_game_says_what_goes_and_asks_first(window_class, library):
+    with closing(db.connect(library)) as conn:
+        for title, day in [("vs Lafayette", "2026-10-18"), ("vs Hyland Hills", "2026-10-24")]:
+            add_game(conn, title, group_files([make_info(f"{title}.MP4")]), date.fromisoformat(day))
+        window = window_class(conn)
+        asked = []
+        answer = False
+
+        def confirm(contents, stopping):
+            asked.append((contents.title, removal_items(contents), stopping))
+            return answer
+
+        window.confirm_delete = confirm
+        assert not window.delete_action.isEnabled()  # nothing picked yet
+        window.games.setCurrentRow(0)
+        assert window.delete_action.isEnabled()
+
+        window.delete_game()  # cancelled
+        assert asked == [
+            ("vs Hyland Hills", ["1 camera and the list of their 1 file (0:10:00 of footage)"], [])
+        ]
+        assert window.games.count() == 2
+
+        answer = True
+        window.delete_game()
+        assert [g.title for g in list_games(conn)] == ["vs Lafayette"]
+        assert window.games.currentItem().text().startswith("vs Lafayette\n")  # the next one
+        assert window.windowTitle() == "vs Lafayette — Game Vids"
+
+        window.delete_game()
+        assert list_games(conn) == [] and window.games.count() == 0
+        assert not window.delete_action.isEnabled()
+        assert window.windowTitle() == "Game Vids"
+        assert "No games yet" in window.player.message.text()
+        assert window.export.game is None and window.triage.game is None
+
+
+def test_the_delete_dialog_lists_what_goes_and_defaults_to_cancel(window_class, library):
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QMessageBox
+
+    with closing(db.connect(library)) as conn:
+        game_id = add_game(
+            conn, "vs Lafayette", group_files([make_info("a.MP4")]), date(2026, 10, 24)
+        )
+        window = window_class(conn)
+        contents = game_contents(conn, game_id)
+        seen = []
+
+        def answer(delete):
+            box = QApplication.activeModalWidget()
+            cancel = box.button(QMessageBox.StandardButton.Cancel)
+            seen.append((box.text(), box.informativeText(), box.defaultButton() is cancel))
+            roles = {box.buttonRole(b): b for b in box.buttons()}
+            (roles[QMessageBox.ButtonRole.DestructiveRole] if delete else cancel).click()
+
+        QTimer.singleShot(0, lambda: answer(delete=False))
+        assert window.confirm_delete(contents, ["Its scans will be stopped."]) is False
+        QTimer.singleShot(0, lambda: answer(delete=True))
+        assert window.confirm_delete(contents, []) is True
+
+        text, informative, default_is_cancel = seen[0]
+        assert text == "Delete “vs Lafayette” (2026-10-24)?"
+        assert informative == (
+            "This deletes from the library:\n"
+            "• 1 camera and the list of their 1 file (0:10:00 of footage)\n\n"
+            "The video files stay in /footage. Its scans will be stopped. This can’t be undone."
+        )
+        assert default_is_cancel
+
+
+def test_deleting_a_game_stops_its_scans_and_export(window_class, library, tmp_path):
+    from test_ui_triage import add_game_with_clips
+
+    from gamevids.triage import load_triage, save_triage
+    from gamevids_ui.scans import ScanJob
+
+    def endless(*args, progress, **_):
+        while True:
+            progress(1.0, 10.0)
+            time.sleep(0.01)
+
+    with closing(db.connect(library)) as conn:
+        game = add_game_with_clips(conn, tmp_path)
+        save_triage(conn, replace(load_triage(conn, game).clips[0], status="kept"))
+        window = window_class(conn)
+        window.games.setCurrentRow(0)
+        window.scans.scan = endless
+        for label in ("A", "B"):
+            camera_id = game.camera_ids[label]
+            window.scans.add(ScanJob(camera_id, game.id, game.title, game.camera(label), ()))
+        window.export.export = endless
+        window.export.ask_path = lambda default: tmp_path / "out.mp4"
+        window.export.start()
+        assert window.scans.busy and window.export.busy
+        asked = []
+        window.confirm_delete = lambda contents, stopping: asked.append(stopping) or True
+
+        window.delete_game()
+
+        assert asked == [
+            ["Its scans will be stopped.", "Its export will be stopped, and nothing from it saved."]
+        ]
+        assert not window.scans.busy and window.scans.waiting == []
+        assert window.scans.results == {}
+        assert not window.export.busy
+        assert list_games(conn) == []
 
 
 # -- Add Game dialog ----------------------------------------------------------

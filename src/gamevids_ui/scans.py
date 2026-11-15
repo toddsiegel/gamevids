@@ -148,6 +148,13 @@ class ScanQueue(QObject):
             self.finished.emit(camera_id)
             self._start_next()
 
+    def forget(self, camera_ids: list[int]) -> None:
+        """Stop any scans of these cameras and drop how their last scans ended,
+        for cameras about to be deleted (their ids may be reused)."""
+        for camera_id in camera_ids:
+            self.cancel(camera_id)
+            self.results.pop(camera_id, None)
+
     def stop_all(self) -> None:
         """Drop the waiting scans and stop the running one. Nothing partial is saved."""
         self.waiting = []

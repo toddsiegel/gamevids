@@ -28,6 +28,7 @@ from gamevids.games import (
     Game,
     GameError,
     add_game,
+    game_contents,
     list_games,
     load_game,
     remove_game,
@@ -69,6 +70,8 @@ from gamevids.report import (
     format_periods,
     format_triage,
     hms,
+    removal_items,
+    removal_note,
 )
 from gamevids.triage import load_triage
 from gamevids.zones import ZoneError, load_zone, parse_polygon, save_zone
@@ -197,11 +200,31 @@ def cmd_game_show(args: argparse.Namespace) -> int:
     return 0
 
 
+def _confirm(prompt: str) -> bool:
+    """Ask a yes/no question on the terminal; anything but yes is no."""
+    try:
+        return input(f"{prompt} [y/N] ").strip().lower() in ("y", "yes")
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+
+
 def cmd_game_remove(args: argparse.Namespace) -> int:
     with _open(args) as conn:
-        title = load_game(conn, args.game).title
+        contents = game_contents(conn, args.game)
+        if not args.yes:
+            print(f"Game {contents.id}: {contents.title} ({contents.date.isoformat()})")
+            print("Removing it deletes from the library:")
+            for item in removal_items(contents):
+                print(f"  {item}")
+            print(f"{removal_note(contents)} This can't be undone.")
+            if not sys.stdin.isatty():
+                raise CommandError("Not removed. Pass --yes to remove it without being asked.")
+            if not _confirm("Remove it?"):
+                print("Not removed.")
+                return 1
         remove_game(conn, args.game)
-    print(f"Removed game {args.game} ({title}). Its video files were not touched.")
+    print(f"Removed game {args.game} ({contents.title}). Its video files were not touched.")
     return 0
 
 
@@ -627,13 +650,20 @@ def build_parser() -> argparse.ArgumentParser:
     listing.add_argument("--desc", action="store_true", help="newest or highest first")
     listing.set_defaults(handler=cmd_game_list)
 
-    for name, handler, text in [
-        ("show", cmd_game_show, "show a game's cameras and files"),
-        ("remove", cmd_game_remove, "remove a game from the library (files are kept)"),
-    ]:
-        sub = game_commands.add_parser(name, help=text)
-        sub.add_argument("game", type=int, help="game id, from `gamevids game list`")
-        sub.set_defaults(handler=handler)
+    show = game_commands.add_parser("show", help="show a game's cameras and files")
+    show.add_argument("game", type=int, help="game id, from `gamevids game list`")
+    show.set_defaults(handler=cmd_game_show)
+
+    remove = game_commands.add_parser(
+        "remove",
+        help="remove a game from the library (files are kept)",
+        description="Delete everything the library holds for a game: its cameras and file "
+        "list, D-zones, scans, clips and their triage, periods, and export history. Its "
+        "video files and exported videos are left alone. Says what will go and asks first.",
+    )
+    remove.add_argument("game", type=int, help="game id, from `gamevids game list`")
+    remove.add_argument("-y", "--yes", action="store_true", help="remove it without asking")
+    remove.set_defaults(handler=cmd_game_remove)
 
     rename = game_commands.add_parser(
         "rename",

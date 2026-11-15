@@ -4,7 +4,7 @@ import sqlite3
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
+from PySide6.QtGui import QAction, QCloseEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
@@ -19,8 +19,15 @@ from PySide6.QtWidgets import (
 )
 
 from gamevids.config import Config
-from gamevids.games import GameError, list_games, load_game
-from gamevids.report import hms
+from gamevids.games import (
+    GameContents,
+    GameError,
+    game_contents,
+    list_games,
+    load_game,
+    remove_game,
+)
+from gamevids.report import hms, removal_items, removal_note
 from gamevids_ui.add_game import AddGameDialog
 from gamevids_ui.export_page import ExportPage
 from gamevids_ui.periods_page import PeriodsPage
@@ -44,12 +51,26 @@ class MainWindow(QMainWindow):
         self.add_action = QAction("&Add Game…", self)
         self.add_action.setShortcut(QKeySequence.StandardKey.New)
         self.add_action.triggered.connect(self.add_game)
-        self.menuBar().addMenu("&Game").addAction(self.add_action)
+        self.delete_action = QAction("&Delete Game…", self)
+        self.delete_action.setToolTip("Delete the game's data from the library (Delete)")
+        self.delete_action.triggered.connect(self.delete_game)
+        game_menu = self.menuBar().addMenu("&Game")
+        game_menu.addAction(self.add_action)
+        game_menu.addSeparator()
+        game_menu.addAction(self.delete_action)
 
         self.games = QListWidget()
         self.games.setAlternatingRowColors(True)
         self.games.setMinimumWidth(260)
         self.games.currentItemChanged.connect(self._game_picked)
+        self.games.setContextMenuPolicy(Qt.ContextMenuPolicy.ActionsContextMenu)
+        self.games.addAction(self.delete_action)
+        QShortcut(
+            QKeySequence.StandardKey.Delete,
+            self.games,
+            self.delete_game,
+            context=Qt.ShortcutContext.WidgetShortcut,
+        )
         add_button = QPushButton("Add Game…")
         add_button.clicked.connect(self.add_game)
         sidebar = QWidget()
@@ -102,7 +123,8 @@ class MainWindow(QMainWindow):
             if game.id == select:
                 self.games.setCurrentItem(item)
         if not summaries:
-            self.player.clear("No games yet. Add one with Game ▸ Add Game… (Ctrl+N).")
+            self._clear_pages("No games yet. Add one with Game ▸ Add Game… (Ctrl+N).")
+        self.delete_action.setEnabled(self.games.currentItem() is not None)
 
     def add_game(self) -> None:
         dialog = AddGameDialog(self.conn, self, start_dir=self.footage_dir)
@@ -112,17 +134,64 @@ class MainWindow(QMainWindow):
             self.reload_games(select=dialog.game_id)
             self.pages.setCurrentWidget(self.zones)  # a new game's next step
 
+    def delete_game(self) -> None:
+        """Delete the picked game's data, once the user has seen what goes and agreed."""
+        item = self.games.currentItem()
+        if item is None:
+            return
+        game_id = item.data(GAME_ID)
+        try:
+            contents = game_contents(self.conn, game_id)
+            camera_ids = list(load_game(self.conn, game_id).camera_ids.values())
+        except GameError as e:
+            self.statusBar().showMessage(str(e), 15_000)
+            return
+        stopping = []
+        if any(self.scans.job(camera_id) for camera_id in camera_ids):
+            stopping.append("Its scans will be stopped.")
+        if self.export.exporting(game_id):
+            stopping.append("Its export will be stopped, and nothing from it saved.")
+        if not self.confirm_delete(contents, stopping):
+            return
+
+        self.scans.forget(camera_ids)
+        self.export.forget(game_id)
+        remove_game(self.conn, game_id)
+        # Pick the game below it in the list, or above it if it was last.
+        ids = [self.games.item(row).data(GAME_ID) for row in range(self.games.count())]
+        row = ids.index(game_id)
+        ids.remove(game_id)
+        self.reload_games(select=ids[min(row, len(ids) - 1)] if ids else None)
+        self.statusBar().showMessage(f"Deleted {contents.title}.", 10_000)
+
+    def confirm_delete(self, contents: GameContents, stopping: list[str]) -> bool:
+        """Say what deleting the game takes from the library, and ask before doing it."""
+        items = "\n".join(f"• {item}" for item in removal_items(contents))
+        after = " ".join([removal_note(contents), *stopping, "This can’t be undone."])
+        box = QMessageBox(QMessageBox.Icon.Warning, "Delete Game", "", parent=self)
+        box.setText(f"Delete “{contents.title}” ({contents.date.isoformat()})?")
+        box.setInformativeText(f"This deletes from the library:\n{items}\n\n{after}")
+        delete = box.addButton("Delete Game", QMessageBox.ButtonRole.DestructiveRole)
+        box.setDefaultButton(box.addButton(QMessageBox.StandardButton.Cancel))
+        box.exec()
+        return box.clickedButton() is delete
+
+    def _clear_pages(self, message: str) -> None:
+        self.setWindowTitle("Game Vids")
+        self.player.clear(message)
+        self.zones.clear()
+        self.periods.clear(message)
+        self.triage.clear(message)
+        self.export.clear(message)
+
     def _game_picked(self, item: QListWidgetItem | None, _previous=None) -> None:
+        self.delete_action.setEnabled(item is not None)
         if item is None:
             return
         try:
             game = load_game(self.conn, item.data(GAME_ID))
         except GameError as e:
-            self.player.clear(str(e))
-            self.zones.clear()
-            self.periods.clear(str(e))
-            self.triage.clear(str(e))
-            self.export.clear(str(e))
+            self._clear_pages(str(e))
             return
         self.setWindowTitle(f"{game.title} — Game Vids")
         self.player.set_game(game)

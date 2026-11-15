@@ -218,6 +218,64 @@ def _chapter(row: sqlite3.Row, serial: str | None) -> Chapter:
     return Chapter(info, datetime.fromisoformat(row["start"]), kind, row["period"])
 
 
+@dataclass(frozen=True)
+class GameContents:
+    """What removing a game takes out of the library."""
+
+    id: int
+    title: str
+    date: date
+    cameras: int
+    files: int
+    footage: float  # seconds, summed over all cameras
+    folders: list[Path]  # where the game's video files are
+    zones: int  # cameras with a saved D-zone
+    scans: int  # cameras with an activity curve
+    clips: int
+    kept: int
+    discarded: int
+    starred: int
+    periods: int
+    exports: int  # game videos recorded as made; the videos themselves stay
+
+
+def game_contents(conn: sqlite3.Connection, game_id: int) -> GameContents:
+    game = conn.execute("SELECT * FROM game WHERE id = ?", (game_id,)).fetchone()
+    if game is None:
+        raise GameError(f"no game {game_id}")
+
+    def count(sql: str) -> int:
+        return conn.execute(sql, (game_id,)).fetchone()[0]
+
+    cameras = "SELECT id FROM camera WHERE game_id = ?"
+    files = conn.execute(
+        f"SELECT path, duration FROM source_file WHERE camera_id IN ({cameras})", (game_id,)
+    ).fetchall()
+    clips = conn.execute(
+        "SELECT COUNT(*), COALESCE(SUM(status = 'kept'), 0),"
+        " COALESCE(SUM(status = 'discarded'), 0), COALESCE(SUM(starred), 0)"
+        f" FROM clip WHERE camera_id IN ({cameras})",
+        (game_id,),
+    ).fetchone()
+    return GameContents(
+        id=game_id,
+        title=game["title"],
+        date=date.fromisoformat(game["date"]),
+        cameras=count("SELECT COUNT(*) FROM camera WHERE game_id = ?"),
+        files=len(files),
+        footage=sum(f["duration"] for f in files),
+        folders=sorted({Path(f["path"]).parent for f in files}),
+        zones=count(f"SELECT COUNT(*) FROM zone WHERE camera_id IN ({cameras})"),
+        scans=count(f"SELECT COUNT(*) FROM activity_curve WHERE camera_id IN ({cameras})"),
+        clips=clips[0],
+        kept=clips[1],
+        discarded=clips[2],
+        starred=clips[3],
+        periods=count("SELECT COUNT(*) FROM period WHERE game_id = ?"),
+        exports=count("SELECT COUNT(*) FROM export WHERE game_id = ?"),
+    )
+
+
 def remove_game(conn: sqlite3.Connection, game_id: int) -> None:
     """Forget a game. Its video files are left untouched."""
     with conn:

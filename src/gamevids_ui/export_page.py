@@ -311,6 +311,18 @@ class ExportPage(QWidget):
         else:
             self.status.clear()
 
+    def exporting(self, game_id: int) -> bool:
+        return self.thread is not None and self.thread.game.id == game_id
+
+    def forget(self, game_id: int) -> None:
+        """Stop the game's export, if it's running, and drop how its last one ended,
+        for a game about to be deleted. Nothing partial is saved."""
+        if self.exporting(game_id):
+            self.shutdown()
+        if self.outcome is not None and self.outcome[0] == game_id:
+            self.outcome = None
+        self._show()
+
     def shutdown(self) -> None:
         """Stop any export; nothing partial is saved."""
         thread = self.thread
@@ -319,3 +331,4 @@ class ExportPage(QWidget):
             thread.finished.disconnect(self._finished)
             thread.requestInterruption()
             thread.wait()
+            thread.deleteLater()

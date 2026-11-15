@@ -1,3 +1,4 @@
+import io
 import subprocess
 import sys
 from dataclasses import replace
@@ -98,10 +99,49 @@ def test_game_add_list_show_remove(game_folder, capsys):
         "DJI_20261024123549_0002_D.MP4",
     ]
 
-    assert main(["game", "remove", "1"]) == 0
+    assert main(["game", "remove", "1", "--yes"]) == 0
     assert "Removed game 1 (vs Hyland Hills)" in capsys.readouterr().out
     assert main(["game", "show", "1"]) == 1
     assert "error: no game 1" in capsys.readouterr().err
+
+
+class Terminal(io.StringIO):
+    """Typed answers, as if from a terminal."""
+
+    def isatty(self):
+        return True
+
+
+def test_game_remove_says_what_goes_and_asks_first(game_folder, capsys, monkeypatch):
+    assert main(["game", "add", "--title", "vs Hyland Hills", str(game_folder)]) == 0
+    capsys.readouterr()
+
+    assert main(["game", "remove", "1"]) == 1  # not a terminal: needs --yes
+    out, err = capsys.readouterr()
+    assert out == (
+        "Game 1: vs Hyland Hills (2026-10-24)\n"
+        "Removing it deletes from the library:\n"
+        "  1 camera and the list of their 2 files (1:05:25 of footage)\n"
+        f"The video files stay in {game_folder}. This can't be undone.\n"
+    )
+    assert "Pass --yes" in err
+
+    monkeypatch.setattr("sys.stdin", Terminal("n\n"))
+    assert main(["game", "remove", "1"]) == 1
+    assert capsys.readouterr().out.endswith("Remove it? [y/N] Not removed.\n")
+
+    monkeypatch.setattr("sys.stdin", Terminal(""))  # Ctrl+D
+    assert main(["game", "remove", "1"]) == 1
+    assert main(["game", "show", "1"]) == 0
+    capsys.readouterr()
+
+    monkeypatch.setattr("sys.stdin", Terminal("y\n"))
+    assert main(["game", "remove", "1"]) == 0
+    assert capsys.readouterr().out.endswith(
+        "Remove it? [y/N] Removed game 1 (vs Hyland Hills). Its video files were not touched.\n"
+    )
+    assert main(["game", "list"]) == 0
+    assert "No games yet" in capsys.readouterr().out
 
 
 def test_game_rename(game_folder, capsys):
