@@ -103,7 +103,6 @@ class ExportPage(QWidget):
         self.shots: list[Shot] = []
         self.thread: ExportThread | None = None
         self.outcome: tuple[int, str] | None = None  # (game id, how its last export here ended)
-        self.last_path: Path | None = None  # the video "Open Folder" shows
 
         self.heading = QLabel()
         font = self.heading.font()
@@ -126,12 +125,9 @@ class ExportPage(QWidget):
         self.export_button.clicked.connect(self.start)
         self.stop_button = QPushButton("Stop")
         self.stop_button.clicked.connect(self.stop)
-        self.open_button = QPushButton("Open Folder")
-        self.open_button.clicked.connect(self.open_folder)
         buttons = QHBoxLayout()
         buttons.addWidget(self.export_button)
         buttons.addWidget(self.stop_button)
-        buttons.addWidget(self.open_button)
         buttons.addStretch(1)
 
         layout = QVBoxLayout(self)
@@ -161,7 +157,6 @@ class ExportPage(QWidget):
         self.heading.setText(message)
         self.summary.clear()
         self.last.clear()
-        self.last_path = None
         self._show()
 
     def set_game(self, game: Game) -> None:
@@ -189,10 +184,8 @@ class ExportPage(QWidget):
                 f"Last exported {when}: {plural(latest.clips, 'clip')} in "
                 f"{hms(latest.duration)}, to {latest.path}"
             )
-            self.last_path = latest.path
         else:
             self.last.setText("Not exported yet.")
-            self.last_path = None
         self._show()
 
     def _summary(self, game: Game) -> str:
@@ -285,10 +278,6 @@ class ExportPage(QWidget):
         if thread.result is not None:
             self._reveal(thread.result.path)  # show the finished video
 
-    def open_folder(self) -> None:
-        if self.last_path is not None:
-            self._reveal(self.last_path)
-
     @staticmethod
     def _reveal(path: Path) -> None:
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.parent)))
@@ -301,7 +290,6 @@ class ExportPage(QWidget):
         self.export_button.setEnabled(game is not None and bool(self.shots) and thread is None)
         self.stop_button.setVisible(mine)
         self.bar.setVisible(mine)
-        self.open_button.setEnabled(self.last_path is not None and self.last_path.exists())
         if thread is not None and mine:
             fraction = thread.done / thread.total if thread.total else 0.0
             self.bar.setValue(round(fraction * 1000))

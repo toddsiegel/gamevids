@@ -95,7 +95,7 @@ def test_export_saves_the_video_and_records_it(make_page, conn, tmp_path):
         "0:00:33 of 1080p60 video.",  # 3 s of title, 20 s from A and 10 s from B
         "1 clip of our goalie's is still undecided and will be left out.",
     ]
-    assert page.export_button.isEnabled() and not page.open_button.isEnabled()
+    assert page.export_button.isEnabled()
 
     page.start()
     assert page.thread is not None and not page.export_button.isEnabled()
@@ -107,7 +107,7 @@ def test_export_saves_the_video_and_records_it(make_page, conn, tmp_path):
     (export,) = load_exports(conn, game.id)
     assert (export.path, export.clips, export.duration) == (video, 2, 33.0)
     assert page.last.text().endswith(f": 2 clips in 0:00:33, to {video}")
-    assert page.open_button.isEnabled() and page.export_button.isEnabled()
+    assert page.export_button.isEnabled()
     assert page.bar.isHidden() and page.stop_button.isHidden()
 
 
