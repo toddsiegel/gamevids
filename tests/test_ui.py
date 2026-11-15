@@ -172,6 +172,15 @@ def test_empty_library_says_how_to_add_a_game(window_class, library):
         assert "Add Game" in window.player.message.text()
 
 
+def test_quit_closes_the_window(window_class, library):
+    with closing(db.connect(library)) as conn:
+        window = window_class(conn)
+        window.show()
+        assert window.quit_action in window.menuBar().actions()[0].menu().actions()
+        window.quit_action.trigger()
+        assert not window.isVisible()
+
+
 def test_deleting_a_game_says_what_goes_and_asks_first(window_class, library):
     with closing(db.connect(library)) as conn:
         for title, day in [("vs Lafayette", "2026-10-18"), ("vs Hyland Hills", "2026-10-24")]:

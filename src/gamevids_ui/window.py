@@ -54,10 +54,16 @@ class MainWindow(QMainWindow):
         self.delete_action = QAction("&Delete Game…", self)
         self.delete_action.setToolTip("Delete the game's data from the library (Delete)")
         self.delete_action.triggered.connect(self.delete_game)
+        self.quit_action = QAction("&Quit", self)
+        self.quit_action.setShortcut(QKeySequence.StandardKey.Quit)
+        self.quit_action.setMenuRole(QAction.MenuRole.QuitRole)
+        self.quit_action.triggered.connect(self.close)  # closeEvent asks about running work
         game_menu = self.menuBar().addMenu("&Game")
         game_menu.addAction(self.add_action)
         game_menu.addSeparator()
         game_menu.addAction(self.delete_action)
+        game_menu.addSeparator()
+        game_menu.addAction(self.quit_action)
 
         self.games = QListWidget()
         self.games.setAlternatingRowColors(True)
