@@ -282,10 +282,16 @@ class ExportPage(QWidget):
             self.refresh()
         else:
             self._show()
+        if thread.result is not None:
+            self._reveal(thread.result.path)  # show the finished video
 
     def open_folder(self) -> None:
         if self.last_path is not None:
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.last_path.parent)))
+            self._reveal(self.last_path)
+
+    @staticmethod
+    def _reveal(path: Path) -> None:
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.parent)))
 
     # -- showing -----------------------------------------------------------------
 

@@ -43,11 +43,14 @@ def fake_export(title, shots, output, progress=None, **_):
 @pytest.fixture
 def make_page(app, conn, tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
+    revealed = []
+    monkeypatch.setattr(ExportPage, "_reveal", staticmethod(revealed.append))
     pages = []
 
     def make(export=fake_export):
         page = ExportPage(conn, export=export)
         page.ask_path = lambda default: default
+        page.revealed = revealed
         pages.append(page)
         return page
 
@@ -186,3 +189,28 @@ def test_another_game_waits_while_one_exports(make_page, conn, tmp_path):
     assert page.export_button.isEnabled()
     page.set_game(game)
     assert page.status.text().startswith("Saved vs Lafayette - DZone.mp4")
+
+
+def test_a_finished_export_opens_its_folder(make_page, conn, tmp_path):
+    page = make_page()
+    game = add_game_with_clips(conn, tmp_path)
+    keep_first(conn, game)
+    page.set_game(game)
+
+    page.start()
+    finish(page)
+    assert [p.parent for p in page.revealed] == [tmp_path / "Videos" / "Game Vids"]
+
+
+def test_a_failed_export_opens_nothing(make_page, conn, tmp_path):
+    def failing(*args, **kwargs):
+        raise ExportError("no space")
+
+    page = make_page(failing)
+    game = add_game_with_clips(conn, tmp_path)
+    keep_first(conn, game)
+    page.set_game(game)
+
+    page.start()
+    finish(page)
+    assert page.revealed == []
