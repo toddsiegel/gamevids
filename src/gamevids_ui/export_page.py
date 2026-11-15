@@ -14,7 +14,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtCore import QThread, QUrl, Signal
-from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
+from PySide6.QtGui import QAction, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
@@ -120,6 +120,10 @@ class ExportPage(QWidget):
         self.last = QLabel()
         self.last.setWordWrap(True)
 
+        # The Game menu shows this, and its shortcut works from any tab.
+        self.export_action = QAction("&Export…", self)
+        self.export_action.setShortcut(QKeySequence("Ctrl+E"))
+        self.export_action.triggered.connect(self.start)
         self.export_button = QPushButton("Export…")
         self.export_button.setToolTip("Make the game video (Ctrl+E)")
         self.export_button.clicked.connect(self.start)
@@ -142,7 +146,6 @@ class ExportPage(QWidget):
         layout.addWidget(self.last)
         layout.addStretch(1)
 
-        QShortcut(QKeySequence("Ctrl+E"), self, self.start)
         self.clear()
 
     @property
@@ -287,7 +290,9 @@ class ExportPage(QWidget):
     def _show(self) -> None:
         thread, game = self.thread, self.game
         mine = thread is not None and game is not None and thread.game.id == game.id
-        self.export_button.setEnabled(game is not None and bool(self.shots) and thread is None)
+        exportable = game is not None and bool(self.shots) and thread is None
+        self.export_button.setEnabled(exportable)
+        self.export_action.setEnabled(exportable)
         self.stop_button.setVisible(mine)
         self.bar.setVisible(mine)
         if thread is not None and mine:

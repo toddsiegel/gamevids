@@ -10,7 +10,7 @@ opens at the first clip still undecided.
 import sqlite3
 from datetime import datetime, timedelta
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFontDatabase, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -59,6 +59,8 @@ def seconds(value: float) -> str:
 
 
 class TriagePage(QWidget):
+    changed = Signal()  # a clip's decision or trim was saved, or undone
+
     def __init__(self, conn: sqlite3.Connection, parent=None):
         super().__init__(parent)
         self.conn = conn
@@ -220,6 +222,7 @@ class TriagePage(QWidget):
             return
         self.message.clear()
         self._fill_row(index)
+        self.changed.emit()
         if move:
             self._go()
         else:
@@ -255,6 +258,7 @@ class TriagePage(QWidget):
             self.message.setText("Nothing to undo.")
             return
         self._fill_row(self.triage.index)
+        self.changed.emit()
         moved = self.triage.index != before
         self.message.setText("Undone.")
         if moved:

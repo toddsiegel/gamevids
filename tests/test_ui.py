@@ -252,6 +252,33 @@ def test_the_delete_dialog_lists_what_goes_and_defaults_to_cancel(window_class, 
         assert default_is_cancel
 
 
+def test_export_in_the_game_menu_follows_the_kept_clips(window_class, library, tmp_path):
+    from test_ui_triage import add_game_with_clips
+
+    with closing(db.connect(library)) as conn:
+        game = add_game_with_clips(conn, tmp_path)
+        window = window_class(conn)
+        menu = window.menuBar().actions()[0].menu()
+        export = window.export.export_action
+        assert export in menu.actions() and export.shortcut().toString() == "Ctrl+E"
+        assert not export.isEnabled()  # nothing picked yet
+
+        window.games.setCurrentRow(0)
+        assert not export.isEnabled()  # nothing kept
+        window.pages.setCurrentWidget(window.triage)
+        window.triage.keep()  # on the Triage tab, without visiting Export
+        assert export.isEnabled()
+        window.triage.undo()
+        assert not export.isEnabled()
+
+        window.triage.keep()
+        window.export.export = lambda *args, progress, **_: time.sleep(0.2)
+        window.export.ask_path = lambda default: tmp_path / "out.mp4"
+        export.trigger()
+        assert window.export.exporting(game.id) and not export.isEnabled()  # one at a time
+        window.export.shutdown()
+
+
 def test_deleting_a_game_stops_its_scans_and_export(window_class, library, tmp_path):
     from test_ui_triage import add_game_with_clips
 

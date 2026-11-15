@@ -58,12 +58,6 @@ class MainWindow(QMainWindow):
         self.quit_action.setShortcut(QKeySequence.StandardKey.Quit)
         self.quit_action.setMenuRole(QAction.MenuRole.QuitRole)
         self.quit_action.triggered.connect(self.close)  # closeEvent asks about running work
-        game_menu = self.menuBar().addMenu("&Game")
-        game_menu.addAction(self.add_action)
-        game_menu.addSeparator()
-        game_menu.addAction(self.delete_action)
-        game_menu.addSeparator()
-        game_menu.addAction(self.quit_action)
 
         self.games = QListWidget()
         self.games.setAlternatingRowColors(True)
@@ -90,6 +84,15 @@ class MainWindow(QMainWindow):
         self.periods = PeriodsPage(conn, self.scans, settings=config.periods)
         self.triage = TriagePage(conn)
         self.export = ExportPage(conn)
+        self.triage.changed.connect(self.export.refresh)  # keeps Export… enabled rightly
+        game_menu = self.menuBar().addMenu("&Game")
+        game_menu.addAction(self.add_action)
+        game_menu.addAction(self.export.export_action)
+        game_menu.addSeparator()
+        game_menu.addAction(self.delete_action)
+        game_menu.addSeparator()
+        game_menu.addAction(self.quit_action)
+
         self.pages = QTabWidget()
         self.pages.setDocumentMode(True)
         self.pages.addTab(self.player, "Watch")
