@@ -1,10 +1,11 @@
-"""The D-Zones page: draw each camera's D-zone on a still frame, save it, and scan.
+"""The D-Zones page: draw each camera's D-zone on a still frame, then scan.
 
 A camera with no zone of its own starts from the nearest game's zone (or a
-default shape), so it usually needs only a nudge. Saving starts that camera's
-scan in the background and moves on to the next camera, so its zone can be
-drawn while the first one scans. Edits to a zone that isn't saved yet are
-kept while you switch between cameras.
+default shape), so it usually needs only a nudge. Each edit is saved as soon as
+it's made (a drag once it's let go, a redraw once it's finished), so a zone is
+where it was left after switching games or quitting. Scanning starts that
+camera's scan in the background and moves on to the next camera, so its zone
+can be drawn while the first one scans.
 """
 
 import sqlite3
@@ -51,7 +52,7 @@ STILL_AT = (0.5, 0.3, 0.7, 0.15, 0.85)
 
 HELP = (
     "Drag a corner to move it · double-click an edge to add a corner · right-click a corner "
-    "to remove it · Ctrl+Z undo · Ctrl+S save and scan"
+    "to remove it · Ctrl+Z undo · Ctrl+S scan"
 )
 DRAWING_HELP = (
     "Click to place each corner · click the first corner, double-click or press Enter to "
@@ -150,12 +151,12 @@ class ZonesPage(QWidget):
         self.redraw_button.setToolTip("Clear the zone and place its corners one by one")
         self.redraw_button.clicked.connect(self.canvas.start_drawing)
         self.reset_button = QPushButton("Reset")
-        self.reset_button.setToolTip("Go back to the saved zone, or the suggested one")
+        self.reset_button.setToolTip("Go back to the zone last scanned, or the suggested one")
         self.reset_button.clicked.connect(self.reset)
         self.frame_button = QPushButton("Another Frame")
         self.frame_button.setToolTip("Show a frame from elsewhere in the footage")
         self.frame_button.clicked.connect(self.another_frame)
-        self.save_button = QPushButton("Save and Scan")
+        self.save_button = QPushButton("Scan")
         self.save_button.clicked.connect(self.save_and_scan)
         self.problem = QLabel()
         self.problem.setWordWrap(True)
@@ -212,12 +213,12 @@ class ZonesPage(QWidget):
                 suggestion = suggest_zone(self.conn, camera_id)
                 edited = suggestion.polygon
                 if suggestion.game_id is None:
-                    source = "A starting shape: drag the corners onto the ice, then save."
+                    source = "A starting shape: drag the corners onto the ice, then scan."
                 else:
                     title = self.conn.execute(
                         "SELECT title FROM game WHERE id = ?", (suggestion.game_id,)
                     ).fetchone()["title"]
-                    source = f"From {title}, camera {suggestion.label}: check it fits, then save."
+                    source = f"From {title}, camera {suggestion.label}: check it fits, then scan."
             missing = camera_timeline(camera).missing_files()
             curve = load_curve(self.conn, camera_id)
             self.cameras.append(
@@ -239,7 +240,7 @@ class ZonesPage(QWidget):
         self.tabs.blockSignals(False)
         self._build_scan_rows()
         self._loaded = False
-        first = next((s for s in self.cameras if s.saved is None), None)
+        first = next((s for s in self.cameras if self._to_do(s)), None)
         self.show_camera(self.cameras.index(first) if first else 0)
         if self.isVisible():
             self._load_stills()
@@ -338,18 +339,35 @@ class ZonesPage(QWidget):
             return
         if not self.canvas.drawing:
             state.edited = self.canvas.polygon()
+            if not self.canvas.dragging:
+                self._autosave(state)
         self._update_controls()
+
+    def _autosave(self, state: CameraState) -> None:
+        """Save the zone being edited, unless it can't be (`zone_problem` says why)."""
+        if state.edited == state.saved:
+            return
+        try:
+            save_zone(self.conn, state.camera_id, state.edited)
+        except ZoneError:
+            return
+        state.saved = state.edited
+        state.source = "Saved zone."
+        if state is self.current:
+            self.source_label.setText(state.source)
+        self._show_scan(state)  # whether it's been scanned with this zone
 
     def reset(self) -> None:
         state = self.current
         if state is None:
             return
         self.canvas.cancel_drawing()
-        if state.saved is not None:
-            state.edited = state.saved
+        if state.scanned is not None:
+            state.edited = state.scanned
         else:
             state.edited = suggest_zone(self.conn, state.camera_id).polygon
         self.canvas.set_polygon(state.edited)
+        self._autosave(state)
         self._update_controls()
 
     def zone_problem(self) -> str | None:
@@ -365,17 +383,15 @@ class ZonesPage(QWidget):
         state = self.current
         if state is None or self.game is None or not self.save_button.isEnabled():
             return
-        polygon = self.canvas.polygon()
-        save_zone(self.conn, state.camera_id, polygon)
-        state.saved = state.edited = polygon
-        state.source = "Saved zone."
-        self.source_label.setText(state.source)
+        state.edited = self.canvas.polygon()
+        self._autosave(state)  # a suggested zone taken as it is
+        polygon = state.edited
         self.scans.add(
             ScanJob(state.camera_id, self.game.id, self.game.title, state.camera, polygon)
         )
-        # On to the next camera that still needs a zone, to draw it while this one scans.
+        # On to the next camera that still needs a zone or a scan, to draw it while this one scans.
         rest = self.cameras[self.cameras.index(state) + 1 :] + self.cameras
-        following = next((s for s in rest if s.saved is None), None)
+        following = next((s for s in rest if self._to_do(s)), None)
         if following is not None:
             self.show_camera(self.cameras.index(following))
         else:
@@ -401,6 +417,10 @@ class ZonesPage(QWidget):
         self.problem.setText(problem or "")
 
     # -- scans -------------------------------------------------------------------
+
+    def _to_do(self, state: CameraState) -> bool:
+        """True when the camera still needs its zone checked, or a scan with it."""
+        return state.saved is None or self._needs_scan(state)
 
     def _needs_scan(self, state: CameraState) -> bool:
         """True unless the camera is scanning, or was last scanned, with its saved zone."""
@@ -473,7 +493,7 @@ class ZonesPage(QWidget):
             if detection.curve_scanned_at != curve.scanned_at:
                 summary += " from an earlier scan, kept because some were triaged"
         if state.saved is not None and curve.polygon != state.saved:
-            summary += " · the zone has changed since; save and scan again"
+            summary += " · the zone has changed since; scan again"
         return summary
 
     def _scan_changed(self, camera_id: int) -> None:

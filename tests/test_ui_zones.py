@@ -268,7 +268,7 @@ def test_a_new_game_starts_from_the_nearest_games_zones(page, conn, tmp_path):
 
     assert page.current.label == "A"
     assert page.canvas.polygon() == LOW
-    assert page.source_label.text() == "From vs Lafayette, camera A: check it fits, then save."
+    assert page.source_label.text() == "From vs Lafayette, camera A: check it fits, then scan."
     wait_for(lambda: page.canvas.image is not None)
     assert page.canvas.image.size().toTuple() == (1280, 720)
     assert page.save_button.isEnabled()
@@ -310,29 +310,83 @@ def test_saving_starts_the_scan_and_moves_to_the_next_camera(page, conn, tmp_pat
     assert " clips" in page.scan_rows[a][2].text()
     assert not page.scan_rows[a][3].isVisibleTo(page)
 
-    # Back on A: saved and scanned with this zone, so there's nothing to save.
+    # Back on A: scanned with this zone, so there's nothing to scan.
     page.show_camera(0)
     assert page.canvas.polygon() == SQUARE
     assert page.source_label.text() == "Saved zone."
     assert not page.save_button.isEnabled()
     page.canvas.set_polygon(LOW)
     page._canvas_changed()
+    assert load_zone(conn, a) == LOW
     assert page.save_button.isEnabled()
-    page.reset()
+    assert "the zone has changed since; scan again" in page.scan_rows[a][2].text()
+    page.reset()  # back to the zone it was scanned with
     assert page.canvas.polygon() == SQUARE
+    assert load_zone(conn, a) == SQUARE
+    assert not page.save_button.isEnabled()
 
 
-def test_unsaved_edits_survive_switching_cameras(page, conn, tmp_path):
-    game = add_two_camera_game(conn, tmp_path)
+def test_edits_are_saved_and_survive_switching_games(page, conn, tmp_path):
+    game = add_two_camera_game(conn, tmp_path, "vs Lafayette", "2026-10-17")
+    other = add_two_camera_game(conn, tmp_path, "vs Hyland Hills", "2026-10-24")
     page.set_game(game)
     page.canvas.set_polygon(SQUARE)
     page._canvas_changed()
 
-    page.show_camera(1)
-    page.show_camera(0)
+    assert load_zone(conn, game.camera_ids["A"]) == SQUARE
+    assert page.source_label.text() == "Saved zone."
+    assert page.problem.text() == ""
+    assert page.save_button.isEnabled()  # saved, but not scanned yet
 
+    page.set_game(other)
+    page.set_game(load_game(conn, game.id))
+
+    assert page.current.label == "A"  # still to be scanned
     assert page.canvas.polygon() == SQUARE
-    assert load_zone(conn, game.camera_ids["A"]) is None
+    assert page.source_label.text() == "Saved zone."
+
+
+def test_a_drag_is_saved_once_its_let_go(page, conn, tmp_path):
+    game = add_two_camera_game(conn, tmp_path)
+    page.set_game(game)
+    page.canvas.set_polygon(SQUARE)
+    page._canvas_changed()
+    canvas, a = page.canvas, game.camera_ids["A"]
+    frame = canvas.frame_rect()
+
+    def to(x, y):
+        return QPoint(
+            round(frame.left() + x * frame.width()), round(frame.top() + y * frame.height())
+        )
+
+    QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=to(0.75, 0.75))
+    QTest.mouseMove(canvas, to(0.8, 0.9))
+    assert load_zone(conn, a) == SQUARE
+    QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, pos=to(0.8, 0.9))
+
+    moved = load_zone(conn, a)
+    assert moved != SQUARE and moved == canvas.polygon()
+
+
+def test_a_redraw_is_saved_once_its_finished_and_a_bad_zone_isnt(page, conn, tmp_path):
+    game = add_two_camera_game(conn, tmp_path)
+    page.set_game(game)
+    a = game.camera_ids["A"]
+
+    page.canvas.start_drawing()
+    for corner in LOW[:3]:
+        page.canvas.points.append(corner)
+        page._canvas_changed()
+    assert load_zone(conn, a) is None
+    page.canvas.points.append(LOW[3])
+    page.canvas.finish_drawing()
+    assert load_zone(conn, a) == LOW
+
+    page.canvas.set_polygon(((0, 0), (0.5, 0.5), (1, 1)))  # all on one line
+    page._canvas_changed()
+    assert load_zone(conn, a) == LOW
+    assert page.problem.text().startswith("The zone can't be saved")
+    assert not page.save_button.isEnabled()
 
 
 def test_missing_footage_cant_be_scanned(page, conn, tmp_path):

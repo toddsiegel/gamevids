@@ -47,7 +47,9 @@ def _distance_to_segment(p: QPointF, a: QPointF, b: QPointF) -> tuple[float, flo
 
 
 class ZoneCanvas(QWidget):
-    changed = Signal()  # the polygon was edited, or drawing started or finished
+    # The polygon was edited, or drawing started or finished. While a corner is
+    # dragged this fires on every move, and once more when it's let go.
+    changed = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -86,6 +88,10 @@ class ZoneCanvas(QWidget):
 
     def polygon(self) -> Polygon:
         return tuple(self.points)
+
+    @property
+    def dragging(self) -> bool:
+        return self._dragging is not None
 
     def start_drawing(self) -> None:
         if self.drawing:
@@ -214,9 +220,11 @@ class ZoneCanvas(QWidget):
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         if self._dragging is not None and event.button() == Qt.MouseButton.LeftButton:
+            self._dragging = None
             if self._undo and self._undo[-1] == self.points:
                 self._undo.pop()  # a click without a move
-            self._dragging = None
+            else:
+                self._changed()  # the drag is over
 
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
         if event.button() != Qt.MouseButton.LeftButton:
