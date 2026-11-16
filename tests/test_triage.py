@@ -134,6 +134,33 @@ def test_undo_puts_back_the_last_change_and_returns_to_its_clip(conn, game):
     assert not triage.undo()
 
 
+def test_clearing_makes_one_clip_or_all_undecided_and_undoes_as_one_change(conn, game):
+    set_periods(conn, game, ["B", "A", "B"])
+    triage = load_triage(conn, game)
+    triage.keep()
+    triage.toggle_star()
+    triage.discard()
+    triage.keep()
+    triage.go(1)
+
+    triage.clear()
+    assert triage.index == 1  # clearing stays on the clip
+    assert [c.status for c in load_triage(conn, game).clips] == ["kept", "candidate", "kept"]
+    assert triage.clips[1].starred  # the star stays
+
+    assert triage.clear_all()
+    assert triage.index == 0
+    assert triage.decided == 0
+    assert load_triage(conn, game).decided == 0
+    assert not triage.clear_all()  # nothing left to clear
+
+    assert triage.undo()  # the whole Clear All at once
+    assert triage.index == 1
+    assert [c.status for c in load_triage(conn, game).clips] == ["kept", "candidate", "kept"]
+    assert triage.undo()
+    assert triage.clips[1].status == "discarded"
+
+
 def test_trims_reach_ten_seconds_past_the_clip_within_its_recording(conn, game):
     set_periods(conn, game, ["A", "B", None])
     triage = load_triage(conn, game)  # clips at 400, 1400 and 1805 s

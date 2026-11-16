@@ -158,6 +158,65 @@ def test_keys_decide_and_triage_resumes_where_it_stopped(make_page, conn, tmp_pa
     assert statuses(conn, game)[2] == ("candidate", False)
 
 
+def test_clearing_a_status_and_all_of_them(make_page, conn, tmp_path):
+    page = make_page()
+    game = add_game_with_clips(conn, tmp_path)
+    page.set_game(game)
+    page.toggle_star()
+    page.keep()
+    page.discard()
+    asked = []
+
+    page.clear_status()  # on clip 3, still undecided: nothing changes
+    page.table.selectRow(0)
+    page.clear_status()
+    assert page.triage.index == 0
+    assert page.table.item(0, 5).text() == "" and page.table.item(0, 6).text() == "⭐"
+    assert statuses(conn, game) == [("candidate", True), ("discarded", False), ("candidate", False)]
+
+    page.confirm_clear_all = lambda decided: asked.append(decided) or False
+    page.clear_all_statuses()
+    assert statuses(conn, game)[1] == ("discarded", False)  # declined
+
+    page.confirm_clear_all = lambda decided: asked.append(decided) or True
+    page.table.selectRow(1)
+    page.clear_all_statuses()
+    assert asked == [1, 1]
+    assert statuses(conn, game) == [("candidate", True), ("candidate", False), ("candidate", False)]
+    assert page.triage.index == 0
+    assert [page.table.item(r, 5).text() for r in range(3)] == ["", "", ""]
+    page.clear_all_statuses()  # nothing decided: not even asked
+    assert asked == [1, 1]
+
+    page.undo()
+    assert page.triage.index == 1
+    assert page.table.item(1, 5).text() == "Discarded"
+
+
+def test_the_clear_all_dialog_defaults_to_cancel(make_page):
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QMessageBox
+
+    page = make_page()
+    seen = []
+
+    def answer(clear):
+        box = QApplication.activeModalWidget()
+        cancel = box.button(QMessageBox.StandardButton.Cancel)
+        seen.append((box.text(), box.defaultButton() is cancel))
+        roles = {box.buttonRole(b): b for b in box.buttons()}
+        (roles[QMessageBox.ButtonRole.DestructiveRole] if clear else cancel).click()
+
+    QTimer.singleShot(0, lambda: answer(clear=False))
+    assert page.confirm_clear_all(3) is False
+    QTimer.singleShot(0, lambda: answer(clear=True))
+    assert page.confirm_clear_all(1) is True
+    assert seen == [
+        ("Clear the keep or discard decision on 3 clips?", True),
+        ("Clear the keep or discard decision on 1 clip?", True),
+    ]
+
+
 def test_trimming_sets_the_in_and_out_points_at_the_playhead(make_page, conn, tmp_path):
     page = make_page()
     game = add_game_with_clips(conn, tmp_path)

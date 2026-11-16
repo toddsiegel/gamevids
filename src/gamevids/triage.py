@@ -10,7 +10,8 @@ Each clip is kept or discarded, optionally starred, and optionally trimmed:
 its in and out points can move anywhere within `REACH` seconds of what
 detection found, as long as they stay in the clip's recording. Every change
 is saved at once, so quitting midway loses nothing, and triage resumes at
-the first clip still undecided.
+the first clip still undecided. A decision can be cleared, for one clip or
+all of them, which makes the clip undecided again (its star and trim stay).
 """
 
 import sqlite3
@@ -74,7 +75,8 @@ class Triage:
     recordings: dict[int, list[Span]]  # each camera's recordings, by camera id
     missing: str | None = None
     index: int = 0  # the clip being triaged; len(clips) once every clip is done
-    history: list[tuple[int, Clip]] = field(default_factory=list)  # (index, before) for undo
+    # For undo: each change's index, and the rows it changed with their clips before it.
+    history: list[tuple[int, list[tuple[int, Clip]]]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.index = self.resume_index()
@@ -111,12 +113,19 @@ class Triage:
 
     # -- changes -----------------------------------------------------------------
 
+    def _save(self, changes: dict[int, Clip]) -> bool:
+        """Save the clips in `changes` by row, as one undoable change. False if none changed."""
+        before = [(row, self.clips[row]) for row, c in changes.items() if c != self.clips[row]]
+        if not before:
+            return False
+        self.history.append((self.index, before))
+        for row, _ in before:
+            save_triage(self.conn, changes[row])
+            self.clips[row] = changes[row]
+        return True
+
     def _change(self, clip: Clip, *, advance: bool = False) -> None:
-        before = self.clips[self.index]
-        if clip != before:
-            self.history.append((self.index, before))
-            save_triage(self.conn, clip)
-            self.clips[self.index] = clip
+        self._save({self.index: clip})
         if advance:
             self.go(self.index + 1)
 
@@ -132,6 +141,19 @@ class Triage:
     def discard(self) -> None:
         """Discard the current clip and move on to the next."""
         self._change(replace(self._clip(), status="discarded"), advance=True)
+
+    def clear(self) -> None:
+        """Make the current clip undecided again, staying on it."""
+        self._change(replace(self._clip(), status="candidate"))
+
+    def clear_all(self) -> bool:
+        """Make every clip undecided again and go back to the first. False if none was decided."""
+        cleared = self._save(
+            {row: replace(c, status="candidate") for row, c in enumerate(self.clips)}
+        )
+        if cleared:
+            self.go(0)
+        return cleared
 
     def toggle_star(self) -> None:
         clip = self._clip()
@@ -162,8 +184,9 @@ class Triage:
         if not self.history:
             return False
         index, before = self.history.pop()
-        save_triage(self.conn, before)
-        self.clips[index] = before
+        for row, clip in before:
+            save_triage(self.conn, clip)
+            self.clips[row] = clip
         self.index = index
         return True
 

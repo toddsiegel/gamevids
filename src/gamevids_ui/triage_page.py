@@ -2,7 +2,8 @@
 
 Clips play in wall-clock order at 2× (adjustable), each from its in point,
 pausing at its out point. Keys keep or discard a clip and move on, trim its
-in and out points to the playhead, star it, or undo the last change. Every
+in and out points to the playhead, star it, clear its decision (or every
+clip's), or undo the last change. Every
 change is saved at once, so quitting midway loses nothing, and the page
 opens at the first clip still undecided.
 """
@@ -11,12 +12,13 @@ import sqlite3
 from datetime import datetime, timedelta
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFontDatabase, QKeySequence, QShortcut
+from PySide6.QtGui import QAction, QFontDatabase, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMessageBox,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -37,7 +39,8 @@ SHUTTLE_BACK = 2.0  # seconds J jumps back
 SEEK_JUMP = 1.0  # seconds; playback moving further than this between polls was a seek
 
 HELP = (
-    "Enter keep · X discard · S star · U undo · I / O set start / end at the playhead · "
+    "Enter keep · X discard · Backspace clear · S star · U undo · "
+    "I / O set start / end at the playhead · "
     "Space play/pause · J back 2 s · K pause · L play/faster · ←/→ one frame · [ / ] speed"
 )
 COLUMNS = ("#", "Period", "Cam", "Start", "Length", "Status", "⭐")
@@ -109,6 +112,16 @@ class TriagePage(QWidget):
         header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         header.setStretchLastSection(True)
         self.table.itemSelectionChanged.connect(self._row_picked)
+        self.clear_action = QAction("&Clear Status", self)
+        self.clear_action.setShortcut(QKeySequence("Backspace"))
+        self.clear_action.triggered.connect(self.clear_status)
+        self.clear_all_action = QAction("Clear &All Statuses…", self)
+        self.clear_all_action.setShortcut(QKeySequence("Shift+Backspace"))
+        self.clear_all_action.triggered.connect(self.clear_all_statuses)
+        for action in (self.clear_action, self.clear_all_action):
+            self.addAction(action)  # the keys work like the page's other keys
+            self.table.addAction(action)  # and the list's right-click menu has them
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.ActionsContextMenu)
 
         splitter = QSplitter()
         splitter.addWidget(left)
@@ -236,6 +249,33 @@ class TriagePage(QWidget):
         if self.triage is not None:
             self._decide(self.triage.discard, move=True)
 
+    def clear_status(self) -> None:
+        """Make the current clip undecided again."""
+        if self.triage is not None:
+            self._decide(self.triage.clear)
+
+    def clear_all_statuses(self) -> None:
+        """Make every clip undecided again, once the user agrees, and go back to the first."""
+        if self.triage is None or not self.triage.decided:
+            return
+        if not self.confirm_clear_all(self.triage.decided):
+            return
+        self.triage.clear_all()
+        self.message.setText("Cleared every clip’s status. U undoes it.")
+        self._fill_table()
+        self.changed.emit()
+        self._go(play=False)
+
+    def confirm_clear_all(self, decided: int) -> bool:
+        clips = "1 clip" if decided == 1 else f"{decided} clips"
+        box = QMessageBox(QMessageBox.Icon.Question, "Clear All Statuses", "", parent=self)
+        box.setText(f"Clear the keep or discard decision on {clips}?")
+        box.setInformativeText("Stars and trims stay. U undoes it until you switch games.")
+        clear = box.addButton("Clear All", QMessageBox.ButtonRole.DestructiveRole)
+        box.setDefaultButton(box.addButton(QMessageBox.StandardButton.Cancel))
+        box.exec()
+        return box.clickedButton() is clear
+
     def toggle_star(self) -> None:
         if self.triage is not None:
             self._decide(self.triage.toggle_star)
@@ -257,7 +297,7 @@ class TriagePage(QWidget):
         if not self.triage.undo():
             self.message.setText("Nothing to undo.")
             return
-        self._fill_row(self.triage.index)
+        self._fill_table()  # undoing a Clear All puts back every row
         self.changed.emit()
         moved = self.triage.index != before
         self.message.setText("Undone.")
