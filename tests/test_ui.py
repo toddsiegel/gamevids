@@ -279,6 +279,28 @@ def test_export_in_the_game_menu_follows_the_kept_clips(window_class, library, t
         window.export.shutdown()
 
 
+def test_exports_in_the_game_menu_lists_the_picked_games_videos(
+    window_class, library, tmp_path, monkeypatch
+):
+    from test_ui_triage import add_game_with_clips
+
+    from gamevids_ui.exports_dialog import ExportsDialog
+
+    with closing(db.connect(library)) as conn:
+        game = add_game_with_clips(conn, tmp_path)
+        window = window_class(conn)
+        menu = window.menuBar().actions()[0].menu()
+        assert window.exports_action in menu.actions()
+        assert not window.exports_action.isEnabled()  # nothing picked yet
+
+        shown = []
+        monkeypatch.setattr(ExportsDialog, "exec", lambda d: shown.append(d.windowTitle()))
+        window.games.setCurrentRow(0)
+        assert window.exports_action.isEnabled()
+        window.exports_action.trigger()
+        assert shown == [f"Exports — {game.title}"]
+
+
 def test_deleting_a_game_stops_its_scans_and_export(window_class, library, tmp_path):
     from test_ui_triage import add_game_with_clips
 

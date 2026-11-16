@@ -30,6 +30,7 @@ from gamevids.games import (
 from gamevids.report import hms, removal_items, removal_note
 from gamevids_ui.add_game import AddGameDialog
 from gamevids_ui.export_page import ExportPage
+from gamevids_ui.exports_dialog import ExportsDialog
 from gamevids_ui.periods_page import PeriodsPage
 from gamevids_ui.player import Player
 from gamevids_ui.scans import ScanQueue
@@ -54,6 +55,9 @@ class MainWindow(QMainWindow):
         self.delete_action = QAction("&Delete Game…", self)
         self.delete_action.setToolTip("Delete the game's data from the library (Delete)")
         self.delete_action.triggered.connect(self.delete_game)
+        self.exports_action = QAction("E&xports…", self)
+        self.exports_action.setToolTip("List the game videos made for this game")
+        self.exports_action.triggered.connect(self.show_exports)
         self.quit_action = QAction("&Quit", self)
         self.quit_action.setShortcut(QKeySequence.StandardKey.Quit)
         self.quit_action.setMenuRole(QAction.MenuRole.QuitRole)
@@ -88,6 +92,7 @@ class MainWindow(QMainWindow):
         game_menu = self.menuBar().addMenu("&Game")
         game_menu.addAction(self.add_action)
         game_menu.addAction(self.export.export_action)
+        game_menu.addAction(self.exports_action)
         game_menu.addSeparator()
         game_menu.addAction(self.delete_action)
         game_menu.addSeparator()
@@ -134,6 +139,7 @@ class MainWindow(QMainWindow):
         if not summaries:
             self._clear_pages("No games yet. Add one with Game ▸ Add Game… (Ctrl+N).")
         self.delete_action.setEnabled(self.games.currentItem() is not None)
+        self.exports_action.setEnabled(self.games.currentItem() is not None)
 
     def add_game(self) -> None:
         dialog = AddGameDialog(self.conn, self, start_dir=self.footage_dir)
@@ -142,6 +148,13 @@ class MainWindow(QMainWindow):
         if accepted and dialog.game_id is not None:
             self.reload_games(select=dialog.game_id)
             self.pages.setCurrentWidget(self.zones)  # a new game's next step
+
+    def show_exports(self) -> None:
+        """List the game videos made for the picked game."""
+        game = self.export.game
+        if game is None:
+            return
+        ExportsDialog(self.conn, game, self).exec()
 
     def delete_game(self) -> None:
         """Delete the picked game's data, once the user has seen what goes and agreed."""
@@ -195,6 +208,7 @@ class MainWindow(QMainWindow):
 
     def _game_picked(self, item: QListWidgetItem | None, _previous=None) -> None:
         self.delete_action.setEnabled(item is not None)
+        self.exports_action.setEnabled(item is not None)
         if item is None:
             return
         try:

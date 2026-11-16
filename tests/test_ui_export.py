@@ -214,3 +214,41 @@ def test_a_failed_export_opens_nothing(make_page, conn, tmp_path):
     page.start()
     finish(page)
     assert page.revealed == []
+
+
+def test_the_exports_dialog_lists_a_games_videos_newest_first(app, conn, tmp_path, monkeypatch):
+    from gamevids.export import save_export
+    from gamevids_ui.exports_dialog import ExportsDialog
+
+    opened = []
+    monkeypatch.setattr(ExportsDialog, "_open", staticmethod(opened.append))
+    game = add_game_with_clips(conn, tmp_path)
+
+    dialog = ExportsDialog(conn, game)
+    assert dialog.table.isHidden() and dialog.message.text().startswith("Not exported yet.")
+    assert not dialog.open_button.isEnabled() and not dialog.folder_button.isEnabled()
+
+    first = tmp_path / "first.mp4"  # never written, so missing
+    second = tmp_path / "out" / "second.mp4"
+    second.parent.mkdir()
+    second.write_bytes(b"x")
+    save_export(conn, game.id, ExportResult(first, 33.0, 2, 2, 1))
+    save_export(conn, game.id, ExportResult(second, 63.0, 3, 3, 1))
+
+    dialog = ExportsDialog(conn, game)
+    assert dialog.message.text() == "2 exports, newest first."
+    rows = [
+        [dialog.table.item(row, column).text() for column in range(1, 4)]
+        for row in range(dialog.table.rowCount())
+    ]
+    assert rows == [["3", "0:01:03", str(second)], ["2", "0:00:33", f"{first} (missing)"]]
+
+    assert dialog.picked.path == second  # the newest is picked
+    dialog.open_video()
+    dialog.show_folder()
+    assert opened == [second, second.parent]
+
+    dialog.table.selectRow(1)
+    assert not dialog.open_button.isEnabled() and dialog.folder_button.isEnabled()
+    dialog.open_video()  # ignored: the file's gone
+    assert opened == [second, second.parent]
