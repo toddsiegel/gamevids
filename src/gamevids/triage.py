@@ -14,6 +14,11 @@ is saved at once, so quitting midway loses nothing, and triage resumes at
 the first clip still undecided. A decision can be cleared, for one clip or
 all of them, which makes the clip undecided again (its goal against mark and
 trim stay).
+
+Neighbouring clips that detection split apart can be joined into one, from
+the first one's in point to the last one's out point, as long as they're on
+one camera in one period and recording. The joined clip takes the first
+one's row; the others are deleted (undo puts them back).
 """
 
 import sqlite3
@@ -49,17 +54,49 @@ def goalie_clips(
     return ours
 
 
+def _ts(moment: datetime | None) -> str | None:
+    return moment.astimezone(UTC).isoformat() if moment else None
+
+
+def _update(conn: sqlite3.Connection, clip: Clip) -> None:
+    conn.execute(
+        "UPDATE clip SET end = ?, trim_in = ?, trim_out = ?, score = ?, status = ?,"
+        " goal_against = ? WHERE id = ?",
+        (
+            _ts(clip.end),
+            _ts(clip.trim_in),
+            _ts(clip.trim_out),
+            clip.score,
+            clip.status,
+            int(clip.goal_against),
+            clip.id,
+        ),
+    )
+
+
+def _insert(conn: sqlite3.Connection, clip: Clip) -> None:
+    """Put back a deleted clip under its old id."""
+    conn.execute(
+        "INSERT INTO clip (id, camera_id, start, end, trim_in, trim_out, score, status,"
+        " goal_against) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            clip.id,
+            clip.camera_id,
+            _ts(clip.start),
+            _ts(clip.end),
+            _ts(clip.trim_in),
+            _ts(clip.trim_out),
+            clip.score,
+            clip.status,
+            int(clip.goal_against),
+        ),
+    )
+
+
 def save_triage(conn: sqlite3.Connection, clip: Clip) -> None:
-    """Save a clip's status, goal against mark and trim."""
-
-    def ts(moment: datetime | None) -> str | None:
-        return moment.astimezone(UTC).isoformat() if moment else None
-
+    """Save a clip's status, goal against mark, trim, and end (which joining moves)."""
     with conn:
-        conn.execute(
-            "UPDATE clip SET trim_in = ?, trim_out = ?, status = ?, goal_against = ? WHERE id = ?",
-            (ts(clip.trim_in), ts(clip.trim_out), clip.status, int(clip.goal_against), clip.id),
-        )
+        _update(conn, clip)
 
 
 @dataclass
@@ -77,8 +114,8 @@ class Triage:
     recordings: dict[int, list[Span]]  # each camera's recordings, by camera id
     missing: str | None = None
     index: int = 0  # the clip being triaged; len(clips) once every clip is done
-    # For undo: each change's index, and the rows it changed with their clips before it.
-    history: list[tuple[int, list[tuple[int, Clip]]]] = field(default_factory=list)
+    # For undo: each change's index, and the clips and periods before it.
+    history: list[tuple[int, list[Clip], list[Period]]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.index = self.resume_index()
@@ -104,27 +141,49 @@ class Triage:
     def go(self, index: int) -> None:
         self.index = min(max(index, 0), len(self.clips))
 
+    def recording(self, clip: Clip) -> Span | None:
+        """The recording `clip` starts in, if its camera's recordings are known."""
+        for start, end in self.recordings.get(clip.camera_id, []):
+            if start <= clip.start <= end:
+                return start, end
+        return None
+
     def reach(self, clip: Clip) -> Span:
         """How far `clip` can be trimmed out to: `REACH` beyond it, within its recording."""
         low = clip.start - timedelta(seconds=REACH)
         high = clip.end + timedelta(seconds=REACH)
-        for start, end in self.recordings.get(clip.camera_id, []):
-            if start <= clip.start <= end:
-                return max(low, start), min(high, end)
+        recording = self.recording(clip)
+        if recording is not None:
+            return max(low, recording[0]), min(high, recording[1])
         return low, high
 
     # -- changes -----------------------------------------------------------------
 
+    def _write(self, clips: list[Clip], periods: list[Period]) -> None:
+        """Make the clips `clips`, saving rows that changed, went or came back."""
+        old = {c.id: c for c in self.clips}
+        with self.conn:
+            for gone in old.keys() - {c.id for c in clips}:
+                self.conn.execute("DELETE FROM clip WHERE id = ?", (gone,))
+            for clip in clips:
+                if clip.id not in old:
+                    _insert(self.conn, clip)
+                elif clip != old[clip.id]:
+                    _update(self.conn, clip)
+        self.clips, self.periods = list(clips), list(periods)
+
+    def _commit(self, clips: list[Clip], periods: list[Period]) -> bool:
+        """Save `clips` as one undoable change. False if nothing changed."""
+        if clips == self.clips:
+            return False
+        self.history.append((self.index, self.clips, self.periods))
+        self._write(clips, periods)
+        return True
+
     def _save(self, changes: dict[int, Clip]) -> bool:
         """Save the clips in `changes` by row, as one undoable change. False if none changed."""
-        before = [(row, self.clips[row]) for row, c in changes.items() if c != self.clips[row]]
-        if not before:
-            return False
-        self.history.append((self.index, before))
-        for row, _ in before:
-            save_triage(self.conn, changes[row])
-            self.clips[row] = changes[row]
-        return True
+        clips = [changes.get(row, c) for row, c in enumerate(self.clips)]
+        return self._commit(clips, self.periods)
 
     def _change(self, clip: Clip, *, advance: bool = False) -> None:
         self._save({self.index: clip})
@@ -188,14 +247,54 @@ class Triage:
             raise TriageError(f"the clip must end at least {MIN_LENGTH:g} s after it starts")
         self._change(replace(clip, trim_out=moment))
 
+    def join(self, first: int, last: int) -> None:
+        """Join the clips in rows `first` to `last` into one, and go to it.
+
+        It runs from the first one's in point to the last one's out point. It's
+        kept if any of them was (or was a goal against), discarded if all of
+        them were, and otherwise undecided.
+        """
+        first, last = sorted((first, last))
+        first, last = max(first, 0), min(last, len(self.clips) - 1)
+        if last <= first:
+            raise TriageError("pick two or more clips to join")
+        group = self.clips[first : last + 1]
+        head, tail = group[0], group[-1]
+        if any(c.camera_id != head.camera_id for c in group):
+            raise TriageError("only clips on one camera can be joined")
+        if any(p != self.periods[first] for p in self.periods[first : last + 1]):
+            raise TriageError("only clips in one period can be joined")
+        if any(self.recording(c) != self.recording(head) for c in group):
+            raise TriageError("only clips in one recording can be joined")
+        goal_against = any(c.goal_against for c in group)
+        if goal_against or any(c.status == "kept" for c in group):
+            status = "kept"
+        elif all(c.status == "discarded" for c in group):
+            status = "discarded"
+        else:
+            status = "candidate"
+        joined = replace(
+            head,
+            end=tail.end,
+            trim_out=tail.trim_out,
+            score=max(c.score for c in group),
+            status=status,
+            goal_against=goal_against,
+        )
+        if joined.duration < MIN_LENGTH:
+            raise TriageError(f"the joined clip would be shorter than {MIN_LENGTH:g} s")
+        self._commit(
+            [*self.clips[:first], joined, *self.clips[last + 1 :]],
+            [*self.periods[: first + 1], *self.periods[last + 1 :]],
+        )
+        self.go(first)
+
     def undo(self) -> bool:
         """Put back the last change and go to its clip. False when there's nothing to undo."""
         if not self.history:
             return False
-        index, before = self.history.pop()
-        for row, clip in before:
-            save_triage(self.conn, clip)
-            self.clips[row] = clip
+        index, clips, periods = self.history.pop()
+        self._write(clips, periods)
         self.index = index
         return True
 

@@ -86,7 +86,10 @@ def make_page(app, conn):
         page.close()
 
 
-def add_game_with_clips(conn, tmp_path, goalies=("A", "B", "A")):
+A_SPANS = ((100, 110), (400, 420), (1500, 1510), (2500, 2520))
+
+
+def add_game_with_clips(conn, tmp_path, goalies=("A", "B", "A"), a_spans=A_SPANS):
     """Cameras A and B, each with clips, and P1-P3 at 300, 1290 and 2290 s."""
     infos = []
     for name, serial in [("a.MP4", "CAMA"), ("b.MP4", "CAMB")]:
@@ -96,7 +99,7 @@ def add_game_with_clips(conn, tmp_path, goalies=("A", "B", "A")):
     game = load_game(conn, add_game(conn, "vs Lafayette", group_files(infos), date(2026, 10, 24)))
     a, b = game.camera_ids["A"], game.camera_ids["B"]
     curve = make_play_curve(0, GAME)
-    clips = {a: [(100, 110), (400, 420), (1500, 1510), (2500, 2520)], b: [(1400, 1410)]}
+    clips = {a: list(a_spans), b: [(1400, 1410)]}
     for camera_id, spans in clips.items():
         segments = [Segment(at(s), at(e), 0.1) for s, e in spans]
         save_clips(conn, camera_id, segments, DEFAULT_SETTINGS, curve)
@@ -182,6 +185,49 @@ def test_up_and_down_move_between_clips(make_page, conn, tmp_path):
     QTest.keyClick(page, Qt.Key.Key_Up)
     assert page.triage.index == 2
     assert statuses(conn, game) == [("candidate", False), ("candidate", False), ("kept", False)]
+
+
+def test_shift_arrows_select_clips_and_m_joins_them(make_page, conn, tmp_path):
+    page = make_page()
+    spans = ((400, 420), (430, 440), (450, 460), *A_SPANS[2:])
+    game = add_game_with_clips(conn, tmp_path, a_spans=spans)
+    page.set_game(game)
+    page.show()
+    page.activateWindow()
+    assert QTest.qWaitForWindowActive(page)
+    page.table.selectRow(1)
+
+    QTest.keyClick(page, Qt.Key.Key_M)  # nothing picked yet
+    assert "hold Shift" in page.message.text()
+    QTest.keyClick(page, Qt.Key.Key_Up, Qt.KeyboardModifier.ShiftModifier)
+    QTest.keyClick(page, Qt.Key.Key_Down, Qt.KeyboardModifier.ShiftModifier)
+    QTest.keyClick(page, Qt.Key.Key_Down, Qt.KeyboardModifier.ShiftModifier)
+    assert page.triage.index == 1  # still on the clip being triaged
+    assert sorted(i.row() for i in page.table.selectionModel().selectedRows()) == [1, 2]
+    QTest.keyClick(page, Qt.Key.Key_Up, Qt.KeyboardModifier.ShiftModifier)
+    QTest.keyClick(page, Qt.Key.Key_Up, Qt.KeyboardModifier.ShiftModifier)
+    assert sorted(i.row() for i in page.table.selectionModel().selectedRows()) == [0, 1]
+    QTest.keyClick(page, Qt.Key.Key_Down, Qt.KeyboardModifier.ShiftModifier)
+    QTest.keyClick(page, Qt.Key.Key_Down, Qt.KeyboardModifier.ShiftModifier)
+
+    QTest.keyClick(page, Qt.Key.Key_M)
+
+    assert page.message.text() == "Joined 2 clips. U undoes it."
+    assert page.triage.index == 1
+    assert page.table.rowCount() == 4
+    assert page.bar.kept == (at(430), at(460))
+    assert [page.table.selectedIndexes()[0].row()] == [1]
+    clip = load_triage(conn, game).clips[1]
+    assert (clip.in_point, clip.out_point) == (at(430), at(460))
+
+    # A selection spilling into the next period can't be joined.
+    QTest.keyClick(page, Qt.Key.Key_Down, Qt.KeyboardModifier.ShiftModifier)
+    QTest.keyClick(page, Qt.Key.Key_M)
+    assert page.message.text() == "Can't: only clips on one camera can be joined."
+
+    page.undo()
+    assert page.table.rowCount() == 5
+    assert len(load_triage(conn, game).clips) == 5
 
 
 def test_clearing_a_status_and_all_of_them(make_page, conn, tmp_path):

@@ -4,6 +4,8 @@ Clips play in wall-clock order at 2× (adjustable), each from its in point,
 pausing at its out point. Keys keep or discard a clip and move on, mark it
 as a goal against (which keeps it too), trim its in and out points to the
 playhead, clear its decision (or every clip's), or undo the last change.
+Shift+↑/↓ stretches the selection from the clip being triaged over its
+neighbours, and M joins the selected clips into one.
 Every change is saved at once, so quitting midway loses nothing, and the
 page opens at the first clip still undecided.
 """
@@ -11,7 +13,7 @@ page opens at the first clip still undecided.
 import sqlite3
 from datetime import datetime, timedelta
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QItemSelection, QItemSelectionModel, Qt
 from PySide6.QtGui import QAction, QFontDatabase, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -40,7 +42,8 @@ SEEK_JUMP = 1.0  # seconds; playback moving further than this between polls was 
 
 HELP = (
     "Enter keep · G keep as goal against · X discard · Backspace clear · U undo · "
-    "↑/↓ previous/next clip · I / O set start / end at the playhead · "
+    "↑/↓ previous/next clip · Shift+↑/↓ select clips · M join them · "
+    "I / O set start / end at the playhead · "
     "Space play/pause · J back 2 s · K pause · L play/faster · ←/→ one frame · [ / ] speed"
 )
 COLUMNS = ("#", "Period", "Cam", "Start", "Length", "Status", "GA")
@@ -71,6 +74,7 @@ class TriagePage(QWidget):
         self.speed = DEFAULT_SPEED
         self._last: datetime | None = None  # the moment playback was last seen at
         self._ended = False  # paused at the out point, so Space replays
+        self.extent: int | None = None  # the far row of a selection for joining, if any
 
         self.player = Player(controls=False)
         self.player.clock_changed.connect(self._clock_changed)
@@ -103,7 +107,7 @@ class TriagePage(QWidget):
         self.table.setHorizontalHeaderLabels(COLUMNS)
         self.table.verticalHeader().hide()
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ContiguousSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # keys stay with triage
         header = self.table.horizontalHeader()
@@ -116,7 +120,10 @@ class TriagePage(QWidget):
         self.clear_all_action = QAction("Clear &All Statuses…", self)
         self.clear_all_action.setShortcut(QKeySequence("Shift+Backspace"))
         self.clear_all_action.triggered.connect(self.clear_all_statuses)
-        for action in (self.clear_action, self.clear_all_action):
+        self.join_action = QAction("&Join Clips", self)
+        self.join_action.setShortcut(QKeySequence("M"))
+        self.join_action.triggered.connect(self.join)
+        for action in (self.clear_action, self.clear_all_action, self.join_action):
             self.addAction(action)  # the keys work like the page's other keys
             self.table.addAction(action)  # and the list's right-click menu has them
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.ActionsContextMenu)
@@ -145,6 +152,8 @@ class TriagePage(QWidget):
             (("Left",), self.step_back),
             (("Up",), lambda: self.move(-1)),
             (("Down",), lambda: self.move(1)),
+            (("Shift+Up",), lambda: self.extend(-1)),
+            (("Shift+Down",), lambda: self.extend(1)),
             (("[",), lambda: self.change_speed(-1)),
             (("]",), lambda: self.change_speed(1)),
         ]:
@@ -197,6 +206,7 @@ class TriagePage(QWidget):
         """Show the clip triage is at from its in point, playing if `play`."""
         self._ended = False
         self._last = None
+        self.extent = None
         clip = self.clip
         if self.triage is None:
             pass  # no game: `clear` has said so
@@ -227,12 +237,28 @@ class TriagePage(QWidget):
             return  # already past the last clip
         self.table.selectRow(min(max(self.triage.index + step, 0), last))  # → _row_picked
 
+    def extend(self, step: int) -> None:
+        """Stretch or shrink the selection by `step` rows, keeping the clip being triaged."""
+        if self.triage is None or self.clip is None:
+            return
+        far = self.triage.index if self.extent is None else self.extent
+        far = min(max(far + step, 0), len(self.triage.clips) - 1)
+        self.extent = None if far == self.triage.index else far
+        self._select_row()
+
     def _row_picked(self) -> None:
-        rows = self.table.selectionModel().selectedRows()
-        if self.triage is not None and rows and rows[0].row() != self.triage.index:
-            self.triage.go(rows[0].row())
-            self.message.clear()
-            self._go()
+        if self.triage is None:
+            return
+        rows = sorted(i.row() for i in self.table.selectionModel().selectedRows())
+        if len(rows) > 1:  # shift-clicked: a selection for joining
+            index = self.triage.index
+            self.extent = rows[-1] if rows[0] == index else rows[0]
+        elif rows:
+            self.extent = None
+            if rows[0] != self.triage.index:
+                self.triage.go(rows[0])
+                self.message.clear()
+                self._go()
 
     # -- decisions ---------------------------------------------------------------
 
@@ -286,6 +312,24 @@ class TriagePage(QWidget):
         box.exec()
         return box.clickedButton() is clear
 
+    def join(self) -> None:
+        """Join the selected clips into one and play it."""
+        if self.triage is None or self.clip is None:
+            return
+        if self.extent is None:
+            self.message.setText("Can't: hold Shift and press ↑ or ↓ to pick clips to join first.")
+            return
+        first, last = sorted((self.triage.index, self.extent))
+        try:
+            self.triage.join(first, last)
+        except TriageError as e:
+            self.message.setText(f"Can't: {e}.")
+            return
+        self.extent = None
+        self._fill_table()
+        self._go()
+        self.message.setText(f"Joined {last - first + 1} clips. U undoes it.")
+
     def toggle_goal_against(self) -> None:
         if self.triage is not None:
             marking = self.clip is not None and not self.clip.goal_against
@@ -308,7 +352,8 @@ class TriagePage(QWidget):
         if not self.triage.undo():
             self.message.setText("Nothing to undo.")
             return
-        self._fill_table()  # undoing a Clear All puts back every row
+        self.extent = None
+        self._fill_table()  # undoing a Clear All or a join puts back every row
         moved = self.triage.index != before
         self.message.setText("Undone.")
         if moved:
@@ -460,8 +505,20 @@ class TriagePage(QWidget):
     def _select_row(self) -> None:
         self.table.blockSignals(True)
         if self.triage is not None and self.triage.current is not None:
-            self.table.selectRow(self.triage.index)
-            self.table.scrollToItem(self.table.item(self.triage.index, 0))
+            index = self.triage.index
+            self.table.selectRow(index)
+            if self.extent is not None:
+                model = self.table.model()
+                first, last = sorted((index, self.extent))
+                span = QItemSelection(
+                    model.index(first, 0), model.index(last, model.columnCount() - 1)
+                )
+                self.table.selectionModel().select(
+                    span, QItemSelectionModel.SelectionFlag.ClearAndSelect
+                )
+                self.table.scrollToItem(self.table.item(self.extent, 0))
+            else:
+                self.table.scrollToItem(self.table.item(index, 0))
         else:
             self.table.clearSelection()
         self.table.blockSignals(False)

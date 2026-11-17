@@ -196,3 +196,88 @@ def test_trims_reach_ten_seconds_past_the_clip_within_its_recording(conn, game):
 
     saved = load_triage(conn, game).clips[0]
     assert (saved.trim_in, saved.trim_out, saved.status) == (at(392), at(428), "candidate")
+
+
+def split_clips(conn, game):
+    """Camera A's P1 clip split in three, at 400-420, 430-440 and 450-460 s."""
+    a = game.camera_ids["A"]
+    spans = [(100, 110), (400, 420), (430, 440), (450, 460), (1500, 1510), (2500, 2520)]
+    segments = [Segment(at(s), at(e), 0.1) for s, e in spans]
+    save_clips(conn, a, segments, DEFAULT_SETTINGS, make_play_curve(0, GAME))
+    set_periods(conn, game, ["A", "B", "B"])  # P2 has B's clips at 1,400 and 1,805 s
+
+
+def test_joining_runs_from_the_first_in_point_to_the_last_out_point(conn, game):
+    split_clips(conn, game)
+    triage = load_triage(conn, game)
+    assert offsets(triage.clips) == [400, 430, 450, 1400, 1805, 2600]
+    triage.set_in(at(398))
+    triage.discard()
+    triage.toggle_goal_against()
+    triage.go(2)
+    triage.set_out(at(462))
+    ids = [c.id for c in triage.clips]
+
+    triage.join(2, 0)  # either way round
+
+    assert triage.index == 0
+    joined = triage.clips[0]
+    assert (joined.in_point, joined.out_point) == (at(398), at(462))
+    assert joined.status == "kept" and joined.goal_against
+    assert triage.reach(joined) == (at(390), at(470))
+    assert [p.name for p in triage.periods] == ["P1", "P2", "P2", "P3"]
+    reloaded = load_triage(conn, game)
+    assert [c.id for c in reloaded.clips] == [ids[0], *ids[3:]]
+    assert reloaded.clips[0] == joined
+
+    assert triage.undo()  # puts back the deleted clips, ids and all
+    assert triage.index == 2
+    assert load_triage(conn, game).clips == triage.clips
+    assert [c.id for c in triage.clips] == ids
+    assert triage.clips[2].out_point == at(462)
+
+
+@pytest.mark.parametrize(
+    ("first", "last", "error"),
+    [
+        (1, 1, "two or more"),
+        (2, 3, "one camera"),
+        (3, 4, "one recording"),
+    ],
+)
+def test_joining_needs_neighbours_on_one_camera_and_recording(conn, game, first, last, error):
+    split_clips(conn, game)
+    triage = load_triage(conn, game)
+
+    with pytest.raises(TriageError, match=error):
+        triage.join(first, last)
+    assert len(triage.clips) == 6 and not triage.history
+
+
+def test_joining_across_periods_is_refused(conn, game):
+    set_periods(conn, game, ["A", "A", "A"])
+    triage = load_triage(conn, game)  # 400, 1500 and 2500 s
+
+    with pytest.raises(TriageError, match="one period"):
+        triage.join(0, 1)
+
+
+@pytest.mark.parametrize(
+    ("statuses", "joined"),
+    [
+        (["discarded", "discarded"], "discarded"),
+        (["discarded", "candidate"], "candidate"),
+        (["discarded", "kept"], "kept"),
+    ],
+)
+def test_a_joined_clip_is_kept_if_any_part_was(conn, game, statuses, joined):
+    split_clips(conn, game)
+    triage = load_triage(conn, game)
+    for status in statuses:
+        {"discarded": triage.discard, "kept": triage.keep, "candidate": lambda: triage.go(1)}[
+            status
+        ]()
+
+    triage.join(0, 1)
+
+    assert triage.clips[0].status == joined
