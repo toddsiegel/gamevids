@@ -110,7 +110,7 @@ def add_game_with_clips(conn, tmp_path, goalies=("A", "B", "A")):
 
 
 def statuses(conn, game):
-    return [(c.status, c.starred) for c in load_triage(conn, game).clips]
+    return [(c.status, c.goal_against) for c in load_triage(conn, game).clips]
 
 
 def test_opens_at_our_goalies_first_clip(make_page, conn, tmp_path):
@@ -135,11 +135,10 @@ def test_keys_decide_and_triage_resumes_where_it_stopped(make_page, conn, tmp_pa
     game = add_game_with_clips(conn, tmp_path)
     page.set_game(game)
 
-    page.toggle_star()
-    page.keep()
+    page.toggle_goal_against()  # marks, keeps and moves on, like Enter
     assert page.triage.index == 1
     assert page.player.label == "B"  # P2's clip is on camera B
-    assert page.table.item(0, 5).text() == "Kept" and page.table.item(0, 6).text() == "⭐"
+    assert page.table.item(0, 5).text() == "Kept" and page.table.item(0, 6).text() == "GA"
     assert statuses(conn, game) == [("kept", True), ("candidate", False), ("candidate", False)]
 
     resumed = make_page()
@@ -189,8 +188,7 @@ def test_clearing_a_status_and_all_of_them(make_page, conn, tmp_path):
     page = make_page()
     game = add_game_with_clips(conn, tmp_path)
     page.set_game(game)
-    page.toggle_star()
-    page.keep()
+    page.toggle_goal_against()
     page.discard()
     asked = []
 
@@ -198,7 +196,7 @@ def test_clearing_a_status_and_all_of_them(make_page, conn, tmp_path):
     page.table.selectRow(0)
     page.clear_status()
     assert page.triage.index == 0
-    assert page.table.item(0, 5).text() == "" and page.table.item(0, 6).text() == "⭐"
+    assert page.table.item(0, 5).text() == "" and page.table.item(0, 6).text() == "GA"
     assert statuses(conn, game) == [("candidate", True), ("discarded", False), ("candidate", False)]
 
     page.confirm_clear_all = lambda decided: asked.append(decided) or False

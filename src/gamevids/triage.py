@@ -6,12 +6,14 @@ P1 (the warmup) and at the far end stay candidates and never reach the game
 video. Our clips play in wall-clock order, so triage watches the game the
 way the video will show it.
 
-Each clip is kept or discarded, optionally starred, and optionally trimmed:
+Each clip is kept or discarded, and optionally trimmed; a kept clip can
+be marked as a goal against, which keeps it too:
 its in and out points can move anywhere within `REACH` seconds of what
 detection found, as long as they stay in the clip's recording. Every change
 is saved at once, so quitting midway loses nothing, and triage resumes at
 the first clip still undecided. A decision can be cleared, for one clip or
-all of them, which makes the clip undecided again (its star and trim stay).
+all of them, which makes the clip undecided again (its goal against mark and
+trim stay).
 """
 
 import sqlite3
@@ -48,15 +50,15 @@ def goalie_clips(
 
 
 def save_triage(conn: sqlite3.Connection, clip: Clip) -> None:
-    """Save a clip's status, star and trim."""
+    """Save a clip's status, goal against mark and trim."""
 
     def ts(moment: datetime | None) -> str | None:
         return moment.astimezone(UTC).isoformat() if moment else None
 
     with conn:
         conn.execute(
-            "UPDATE clip SET trim_in = ?, trim_out = ?, status = ?, starred = ? WHERE id = ?",
-            (ts(clip.trim_in), ts(clip.trim_out), clip.status, int(clip.starred), clip.id),
+            "UPDATE clip SET trim_in = ?, trim_out = ?, status = ?, goal_against = ? WHERE id = ?",
+            (ts(clip.trim_in), ts(clip.trim_out), clip.status, int(clip.goal_against), clip.id),
         )
 
 
@@ -155,9 +157,16 @@ class Triage:
             self.go(0)
         return cleared
 
-    def toggle_star(self) -> None:
+    def toggle_goal_against(self) -> None:
+        """Mark the current clip as a goal against, keep it and move on to the next.
+
+        On a clip already marked, take the mark off and stay on it; it stays kept.
+        """
         clip = self._clip()
-        self._change(replace(clip, starred=not clip.starred))
+        if clip.goal_against:
+            self._change(replace(clip, goal_against=False))
+        else:
+            self._change(replace(clip, goal_against=True, status="kept"), advance=True)
 
     def set_in(self, moment: datetime) -> None:
         """Start the current clip at `moment`."""

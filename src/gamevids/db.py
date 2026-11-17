@@ -129,6 +129,10 @@ MIGRATIONS = [
         created_at TEXT NOT NULL
     );
     """,
+    # 7: the star became "goal against", so starred clips are now goals against
+    """
+    ALTER TABLE clip RENAME COLUMN starred TO goal_against;
+    """,
 ]
 
 

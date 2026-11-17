@@ -155,19 +155,19 @@ def test_contents_say_what_removing_a_game_deletes(conn):
     ]
     save_clips(conn, a, segments, DEFAULT_SETTINGS, curve)
     first, second, _ = load_clips(conn, a)
-    save_triage(conn, replace(first, status="kept", starred=True))
+    save_triage(conn, replace(first, status="kept", goal_against=True))
     save_triage(conn, replace(second, status="discarded"))
     save_periods(conn, game_id, [Period(1, at, a), Period(2, at + timedelta(seconds=60), b)])
     save_export(conn, game_id, ExportResult(Path("/videos/v.mp4"), 30.0, 1, 1, 1000))
 
     contents = game_contents(conn, game_id)
     assert (contents.zones, contents.scans, contents.clips) == (1, 1, 3)
-    assert (contents.kept, contents.discarded, contents.starred) == (1, 1, 1)
+    assert (contents.kept, contents.discarded, contents.goals_against) == (1, 1, 1)
     assert (contents.periods, contents.exports) == (2, 1)
     assert removal_items(contents)[1:] == [
         "D-zones drawn on 1 camera",
         "Scans of 1 camera",
-        "3 clips: 1 kept, 1 discarded, 1 starred",
+        "3 clips: 1 kept, 1 discarded, 1 goal against",
         "2 periods",
         "The record of 1 export",
     ]

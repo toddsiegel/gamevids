@@ -133,7 +133,7 @@ class Clip:
     trim_out: datetime | None
     score: float
     status: str  # candidate, kept or discarded
-    starred: bool
+    goal_against: bool  # a goal was scored on our goalie in this clip
 
     @property
     def in_point(self) -> datetime:
@@ -153,7 +153,7 @@ class Clip:
     def triaged(self) -> bool:
         return (
             self.status != "candidate"
-            or self.starred
+            or self.goal_against
             or self.trim_in is not None
             or self.trim_out is not None
         )
@@ -219,7 +219,7 @@ def load_clips(conn: sqlite3.Connection, camera_id: int) -> list[Clip]:
             trim_out=_time(r["trim_out"]),
             score=r["score"],
             status=r["status"],
-            starred=bool(r["starred"]),
+            goal_against=bool(r["goal_against"]),
         )
         for r in rows
     ]

@@ -37,6 +37,25 @@ def test_a_library_from_a_newer_gamevids_is_refused(tmp_path):
         db.connect(path)
 
 
+def test_starred_clips_become_goals_against(tmp_path):
+    path = tmp_path / "library.db"
+    raw = sqlite3.connect(path)
+    for version, script in enumerate(db.MIGRATIONS[:6], start=1):
+        raw.executescript(f"{script}\nPRAGMA user_version = {version};")
+    raw.execute("INSERT INTO game (id, title, date, created_at) VALUES (1, 't', 'd', 'c')")
+    raw.execute("INSERT INTO camera (id, game_id, label) VALUES (1, 1, 'A')")
+    raw.execute(
+        "INSERT INTO clip (camera_id, start, end, score, starred)"
+        " VALUES (1, 's', 'e', 0.1, 1), (1, 's', 'e', 0.1, 0)"
+    )
+    raw.commit()
+    raw.close()
+
+    conn = db.connect(path)
+
+    assert [r[0] for r in conn.execute("SELECT goal_against FROM clip ORDER BY id")] == [1, 0]
+
+
 def test_removing_a_game_removes_everything_under_it(tmp_path):
     conn = db.connect(tmp_path / "library.db")
     with conn:

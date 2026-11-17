@@ -780,8 +780,8 @@ def build_parser() -> argparse.ArgumentParser:
         "triage",
         help="list our goalie's clips and how far triage has got",
         description="List the clips that start on the camera behind our goalie's net in "
-        "each period, in the order the Triage tab plays them, with each one's status, star "
-        "and trim, and the clip triage resumes at.",
+        "each period, in the order the Triage tab plays them, with each one's status, "
+        "goal against mark and trim, and the clip triage resumes at.",
     )
     triage.add_argument("game", type=int, help="game id, from `gamevids game list`")
     triage.set_defaults(handler=cmd_triage)

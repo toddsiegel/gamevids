@@ -234,7 +234,7 @@ class GameContents:
     clips: int
     kept: int
     discarded: int
-    starred: int
+    goals_against: int  # clips marked as a goal against
     periods: int
     exports: int  # game videos recorded as made; the videos themselves stay
 
@@ -253,7 +253,7 @@ def game_contents(conn: sqlite3.Connection, game_id: int) -> GameContents:
     ).fetchall()
     clips = conn.execute(
         "SELECT COUNT(*), COALESCE(SUM(status = 'kept'), 0),"
-        " COALESCE(SUM(status = 'discarded'), 0), COALESCE(SUM(starred), 0)"
+        " COALESCE(SUM(status = 'discarded'), 0), COALESCE(SUM(goal_against), 0)"
         f" FROM clip WHERE camera_id IN ({cameras})",
         (game_id,),
     ).fetchone()
@@ -270,7 +270,7 @@ def game_contents(conn: sqlite3.Connection, game_id: int) -> GameContents:
         clips=clips[0],
         kept=clips[1],
         discarded=clips[2],
-        starred=clips[3],
+        goals_against=clips[3],
         periods=count("SELECT COUNT(*) FROM period WHERE game_id = ?"),
         exports=count("SELECT COUNT(*) FROM export WHERE game_id = ?"),
     )

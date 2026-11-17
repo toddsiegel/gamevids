@@ -568,16 +568,16 @@ def test_triage_lists_our_goalies_clips_and_where_triage_resumes(two_camera_game
         ((GAME_START + timedelta(seconds=289)).isoformat(),),  # P1's start, 11:58:35
     ).fetchone()[0]
     with conn:
-        conn.execute("UPDATE clip SET status = 'kept', starred = 1 WHERE id = ?", (first,))
+        conn.execute("UPDATE clip SET status = 'kept', goal_against = 1 WHERE id = ?", (first,))
     capsys.readouterr()
 
     assert main(["triage", "1"]) == 0
 
     lines = capsys.readouterr().out.splitlines()
-    header = ["#", "ID", "PERIOD", "CAM", "START", "LENGTH", "STATUS", "STAR", "TRIM"]
+    header = ["#", "ID", "PERIOD", "CAM", "START", "LENGTH", "STATUS", "GA", "TRIM"]
     assert lines[0].split() == header
     rows = [line.split() for line in lines[1 : lines.index("")]]
-    assert rows[0][1:3] == [str(first), "P1"] and rows[0][6:] == ["kept", "*"]
+    assert rows[0][1:3] == [str(first), "P1"] and rows[0][6:] == ["kept", "GA"]
     # P1 and P3 at camera A, P2 at camera B, in wall-clock order
     assert {(r[2], r[3]) for r in rows} == {("P1", "A"), ("P2", "B"), ("P3", "A")}
     assert [r[4] for r in rows] == sorted(r[4] for r in rows)

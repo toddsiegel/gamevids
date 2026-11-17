@@ -99,19 +99,18 @@ def test_decisions_are_saved_and_triage_resumes_at_the_first_undecided_clip(conn
     set_periods(conn, game, ["B", "A", "B"])
     triage = load_triage(conn, game)
 
-    triage.keep()
-    triage.toggle_star()  # starring doesn't move on
     triage.discard()
+    triage.toggle_goal_against()  # marks, keeps and moves on, like keep
 
     assert triage.index == 2
     saved = {c.id: c for c in load_clips(conn, game.camera_ids["A"])}
-    assert saved[triage.clips[1].id].status == "discarded"
-    assert saved[triage.clips[1].id].starred
+    assert saved[triage.clips[1].id].status == "kept"
+    assert saved[triage.clips[1].id].goal_against
 
     resumed = load_triage(conn, game)
     assert resumed.index == 2
     assert resumed.decided == 2
-    assert [c.status for c in resumed.clips] == ["kept", "discarded", "candidate"]
+    assert [c.status for c in resumed.clips] == ["discarded", "kept", "candidate"]
 
     resumed.keep()
     assert resumed.current is None
@@ -123,30 +122,44 @@ def test_decisions_are_saved_and_triage_resumes_at_the_first_undecided_clip(conn
 def test_undo_puts_back_the_last_change_and_returns_to_its_clip(conn, game):
     set_periods(conn, game, ["B", "A", "B"])
     triage = load_triage(conn, game)
-    triage.toggle_star()
+    triage.toggle_goal_against()
     triage.keep()
 
     assert triage.undo()
+    assert triage.index == 1
+    assert triage.current.status == "candidate"
+    assert triage.undo()  # the mark and the keep together
     assert triage.index == 0
-    assert triage.current.status == "candidate" and triage.current.starred
-    assert triage.undo()
-    assert not load_triage(conn, game).clips[0].starred
+    assert triage.current.status == "candidate" and not triage.current.goal_against
+    assert not load_triage(conn, game).clips[0].goal_against
     assert not triage.undo()
+
+
+def test_marking_a_marked_clip_again_unmarks_it_and_stays(conn, game):
+    set_periods(conn, game, ["B", "A", "B"])
+    triage = load_triage(conn, game)
+    triage.toggle_goal_against()
+    triage.go(0)
+
+    triage.toggle_goal_against()
+
+    assert triage.index == 0
+    clip = load_triage(conn, game).clips[0]
+    assert clip.status == "kept" and not clip.goal_against
 
 
 def test_clearing_makes_one_clip_or_all_undecided_and_undoes_as_one_change(conn, game):
     set_periods(conn, game, ["B", "A", "B"])
     triage = load_triage(conn, game)
     triage.keep()
-    triage.toggle_star()
-    triage.discard()
+    triage.toggle_goal_against()
     triage.keep()
     triage.go(1)
 
     triage.clear()
     assert triage.index == 1  # clearing stays on the clip
     assert [c.status for c in load_triage(conn, game).clips] == ["kept", "candidate", "kept"]
-    assert triage.clips[1].starred  # the star stays
+    assert triage.clips[1].goal_against  # the mark stays
 
     assert triage.clear_all()
     assert triage.index == 0
@@ -158,7 +171,7 @@ def test_clearing_makes_one_clip_or_all_undecided_and_undoes_as_one_change(conn,
     assert triage.index == 1
     assert [c.status for c in load_triage(conn, game).clips] == ["kept", "candidate", "kept"]
     assert triage.undo()
-    assert triage.clips[1].status == "discarded"
+    assert triage.clips[1].status == "kept" and triage.clips[1].goal_against
 
 
 def test_trims_reach_ten_seconds_past_the_clip_within_its_recording(conn, game):

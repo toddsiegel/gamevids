@@ -1,11 +1,11 @@
 """The Triage page: watch each of our goalie's clips and keep or discard it.
 
 Clips play in wall-clock order at 2× (adjustable), each from its in point,
-pausing at its out point. Keys keep or discard a clip and move on, trim its
-in and out points to the playhead, star it, clear its decision (or every
-clip's), or undo the last change. Every
-change is saved at once, so quitting midway loses nothing, and the page
-opens at the first clip still undecided.
+pausing at its out point. Keys keep or discard a clip and move on, mark it
+as a goal against (which keeps it too), trim its in and out points to the
+playhead, clear its decision (or every clip's), or undo the last change.
+Every change is saved at once, so quitting midway loses nothing, and the
+page opens at the first clip still undecided.
 """
 
 import sqlite3
@@ -39,11 +39,11 @@ SHUTTLE_BACK = 2.0  # seconds J jumps back
 SEEK_JUMP = 1.0  # seconds; playback moving further than this between polls was a seek
 
 HELP = (
-    "Enter keep · X discard · Backspace clear · S star · U undo · ↑/↓ previous/next clip · "
-    "I / O set start / end at the playhead · "
+    "Enter keep · G keep as goal against · X discard · Backspace clear · U undo · "
+    "↑/↓ previous/next clip · I / O set start / end at the playhead · "
     "Space play/pause · J back 2 s · K pause · L play/faster · ←/→ one frame · [ / ] speed"
 )
-COLUMNS = ("#", "Period", "Cam", "Start", "Length", "Status", "⭐")
+COLUMNS = ("#", "Period", "Cam", "Start", "Length", "Status", "GA")
 MISSING = {
     "clips": "No clips yet. Draw and scan the D-zones on the D-Zones tab to find them.",
     "periods": "Set the periods on the Periods tab first, so triage knows our goalie's clips.",
@@ -135,7 +135,7 @@ class TriagePage(QWidget):
         for keys, action in [
             (("Return", "Enter"), self.keep),
             (("X",), self.discard),
-            (("S",), self.toggle_star),
+            (("G",), self.toggle_goal_against),
             (("U", QKeySequence.StandardKey.Undo), self.undo),
             (("I",), self.set_in),
             (("O",), self.set_out),
@@ -290,9 +290,10 @@ class TriagePage(QWidget):
         box.exec()
         return box.clickedButton() is clear
 
-    def toggle_star(self) -> None:
+    def toggle_goal_against(self) -> None:
         if self.triage is not None:
-            self._decide(self.triage.toggle_star)
+            marking = self.clip is not None and not self.clip.goal_against
+            self._decide(self.triage.toggle_goal_against, move=marking)
 
     def set_in(self) -> None:
         moment = self.player.wall_clock()
@@ -417,7 +418,7 @@ class TriagePage(QWidget):
                 period.name,
                 f"Camera {self.labels.get(clip.camera_id, '?')}",
                 clock(clip.in_point),
-                state + (" ⭐" if clip.starred else ""),
+                state + (" · Goal against" if clip.goal_against else ""),
                 f"{triage.decided} done",
                 f"Speed {speed_text(self.speed)}",
             ]
@@ -454,7 +455,7 @@ class TriagePage(QWidget):
             clock(clip.in_point),
             hms(clip.duration),
             status,
-            "⭐" if clip.starred else "",
+            "GA" if clip.goal_against else "",
         )
         self.table.blockSignals(True)
         for column, text in enumerate(cells):

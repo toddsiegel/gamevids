@@ -117,6 +117,10 @@ def _count(n: int, noun: str) -> str:
     return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
 
 
+def _goals_against(n: int) -> str:
+    return f"{n} goal{'' if n == 1 else 's'} against"
+
+
 def removal_items(contents: GameContents) -> list[str]:
     """What removing a game deletes from the library, one line per kind of data."""
     c = contents
@@ -132,7 +136,7 @@ def removal_items(contents: GameContents) -> list[str]:
         decided = [
             f"{c.kept} kept" if c.kept else "",
             f"{c.discarded} discarded" if c.discarded else "",
-            f"{c.starred} starred" if c.starred else "",
+            _goals_against(c.goals_against) if c.goals_against else "",
         ]
         triage = ", ".join(d for d in decided if d) or "none triaged yet"
         items.append(f"{_count(c.clips, 'clip')}: {triage}")
@@ -288,14 +292,14 @@ def _trim(clip: Clip) -> str:
 
 
 def triage_summary(triage: Triage) -> str:
-    """e.g. `12 of 40 clips triaged: 8 kept (0:02:31, 3 starred), 4 discarded.`"""
+    """e.g. `12 of 40 clips triaged: 8 kept (0:02:31, 3 goals against), 4 discarded.`"""
     kept = [c for c in triage.clips if c.status == "kept"]
     discarded = sum(c.status == "discarded" for c in triage.clips)
-    starred = sum(c.starred for c in kept)
+    goals = sum(c.goal_against for c in kept)
     length = hms(sum(c.duration for c in kept))
     return (
         f"{triage.decided} of {_count(len(triage.clips), 'clip')} triaged: {len(kept)} kept "
-        f"({length}, {starred} starred), {discarded} discarded."
+        f"({length}, {_goals_against(goals)}), {discarded} discarded."
     )
 
 
@@ -313,12 +317,12 @@ def format_triage(game: Game, triage: Triage) -> str:
             clock(clip.in_point),
             hms(clip.duration),
             clip.status,
-            "*" if clip.starred else "",
+            "GA" if clip.goal_against else "",
             _trim(clip),
         )
         for number, (clip, period) in enumerate(zip(triage.clips, triage.periods, strict=True), 1)
     ]
-    headers = ("#", "ID", "PERIOD", "CAM", "START", "LENGTH", "STATUS", "STAR", "TRIM")
+    headers = ("#", "ID", "PERIOD", "CAM", "START", "LENGTH", "STATUS", "GA", "TRIM")
     lines = table(headers, rows)
 
     lines += ["", triage_summary(triage)]

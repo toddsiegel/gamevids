@@ -166,7 +166,7 @@ def test_detecting_again_replaces_untriaged_clips(conn):
 
 @pytest.mark.parametrize(
     "triage",
-    ["status = 'kept'", "status = 'discarded'", "starred = 1", "trim_in = start"],
+    ["status = 'kept'", "status = 'discarded'", "goal_against = 1", "trim_in = start"],
 )
 def test_triaged_clips_are_only_replaced_when_asked(conn, triage):
     curve = make_curve(60, bursts=[(10, 15, 0.2), (30, 35, 0.06)])

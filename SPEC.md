@@ -32,7 +32,7 @@ A desktop app for turning full-game footage of a hockey goalie into short, watch
    - Clips auto-play at 2× (adjustable) from the in point and pause at the out point. Keys: keep, discard, trim in/out, step frames, undo.
    - Trimming can extend a clip up to 10 s past what detection found, within its recording.
    - Triage progress is saved, so it can be resumed later.
-   - **⭐ star** (optional, per clip): marks a clip as a highlight. In this version stars are only saved, for the future highlights library. They don't change the game video.
+   - **Goal against** (optional, per clip): marks a clip in which a goal was scored on our goalie, and keeps it. In this version the mark is only saved, for the future clip library. It doesn't change the game video.
 6. **Assemble** one video per game:
    - A ~3 s title card with the game title.
    - All kept clips from both cameras in **chronological order** (interleaved by wall-clock time), with a short (~0.3 s) dip-to-black between clips.
@@ -53,7 +53,7 @@ A desktop app for turning full-game footage of a hockey goalie into short, watch
 | I / O | Set in / out point |
 | Enter | Keep and go to next |
 | X | Discard and go to next |
-| S | Toggle ⭐ |
+| G | Mark goal against, keep and go to next (again: unmark) |
 | U (or Ctrl+Z) | Undo |
 | [ / ] | Playback speed down / up |
 
@@ -75,7 +75,7 @@ A desktop app for turning full-game footage of a hockey goalie into short, watch
 - **Zone:** camera_id, polygon (normalized coordinates).
 - **ActivityCurve:** camera_id, sample rate, values (stored as a blob).
 - **Period:** game_id, number (1, 2, 3, OT…), start wall-clock, son's-end camera_id.
-- **Clip:** id, camera_id, source range (detected start/end), trim in/out, score, status (candidate/kept/discarded), starred. Triage order is wall-clock order, so it isn't stored.
+- **Clip:** id, camera_id, source range (detected start/end), trim in/out, score, status (candidate/kept/discarded), goal against. Triage order is wall-clock order, so it isn't stored.
 - **Export:** game_id, path, settings, created_at.
 
 Later phases add Label, Tag, ShotEvent, Reel, Share, etc. as new tables, without changing these.
@@ -96,7 +96,7 @@ Each step ends with something you can run and check yourself. Steps 1–6 and 14
 | 8 ✅ | **Add Game screen.** File picker, the grouping from step 2 shown for confirmation, title entry with the date prefilled, legacy files assigned to a camera/period by hand. | Add a real game entirely from the UI. |
 | 9 ✅ | **D-zone editor.** Polygon drawing on a still frame per camera, prefilled from the previous game; save it, then start the scan in the background with a progress display. | Draw zones for both cameras and watch both scans complete. |
 | 10 ✅ | **Period timeline.** Activity curves for both cameras on one timeline, draggable period markers from step 6, son's-end picker. | Confirm the periods for a real game and click a marker to jump the player there. |
-| 11 ✅ | **Triage screen.** Candidate list plus player, auto-play at 2×, keep/discard/trim/star/undo keys, saved progress. | Triage a full game by keyboard, quit partway, and resume where you left off. |
+| 11 ✅ | **Triage screen.** Candidate list plus player, auto-play at 2×, keep/discard/trim/goal-against/undo keys, saved progress. | Triage a full game by keyboard, quit partway, and resume where you left off. |
 | 12 ✅ | **Assemble and export.** Title card, chronological merge of both cameras, dip-to-black transitions, 1080p60 H.264 + AAC, progress, open the output folder. | Export a game and watch it on a phone or laptop. |
 | 13 | **End-to-end polish.** Run one new game and a few old games through the whole flow; fix rough edges. | One new game done start to finish. Check the time against the ~15 min target. |
 | 14 | **Detection benchmark (follow-up).** An eval command that compares detected clips to existing LosslessCut `.llc` cuts and reports recall and the clip count; use it to adjust the fixed detection defaults. | `gamevids eval <game> <file.llc>` shows how many of your hand cuts were caught. |
@@ -104,7 +104,7 @@ Each step ends with something you can run and check yourself. Steps 1–6 and 14
 ## 5. Later phases (in order) and decisions already made
 
 1. **Labels:** one event type per clip (hotkeys 1–9: Save/SOG, Goal Against, Goal For, Missed Net, Scramble/Rebound, Puck Handling, Breakaway, Penalty Shot, Other; editable), plus free-form tags with autocomplete and an optional note. Structured game metadata (date, vs/@ opponent, optional tournament, venue, our team, season auto-set Aug–Jul). Each tournament game is still its own game.
-2. **Clip library and highlight reels:** clip grid with hover-scrub thumbnails and filters (season, game, opponent, tournament, venue, period, D-zone/O-zone, event type, tags, ⭐); saved filters as smart collections. Reels are saved, editable, re-exportable clip lists; add a clip with `A` or drag. Reels open with an auto title card and give each clip a caption (e.g. `P2 · Save · vs Lafayette`), both togglable, plus a per-reel audio mute. Export presets: Text (720p30, under ~100 MB), Email (25 MB target, 2-pass), Full (1080p60), with a size estimate before encoding. A sensitivity tuning UI: a live activity curve with a draggable threshold and knobs for minimum duration, merge gap and padding.
+2. **Clip library and highlight reels:** clip grid with hover-scrub thumbnails and filters (season, game, opponent, tournament, venue, period, D-zone/O-zone, event type, tags); saved filters as smart collections. Reels are saved, editable, re-exportable clip lists; add a clip with `A` or drag. Reels open with an auto title card and give each clip a caption (e.g. `P2 · Save · vs Lafayette`), both togglable, plus a per-reel audio mute. Export presets: Text (720p30, under ~100 MB), Email (25 MB target, 2-pass), Full (1080p60), with a size estimate before encoding. A sensitivity tuning UI: a live activity curve with a draggable threshold and knobs for minimum duration, merge gap and padding.
 3. **Sharing:** Cloudflare R2 plus a Worker on a free `workers.dev` subdomain. Watch-only player page, unguessable links, optional per-share password, no public index. Links expire by default, and each can be extended, made indefinite or revoked from the app.
 4. **Slow-mo and text:** uses the native 120 fps (0.5× at 60 fps, 0.25× at 30 fps, no interpolation). Each clip picks a replay segment (normal speed, then the marked range replayed slow) or an inline speed ramp. Audio is muted during slow-mo. Adds text overlays and title cards.
 5. **Shot charting:** zone overlay on the video, fitted per camera per game by dragging 4 handles onto rink landmarks (with lens-distortion correction). The fitted overlay also replaces the hand-drawn D-zone. To chart a shot, click the shooter at release; that records the shot time, pixel position (training data), zone and rink coordinates.
