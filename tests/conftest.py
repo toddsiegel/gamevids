@@ -1,3 +1,4 @@
+import gc
 import shutil
 import subprocess
 import time
@@ -97,6 +98,18 @@ def denver(monkeypatch):
     yield
     monkeypatch.undo()
     time.tzset()
+
+
+@pytest.fixture(autouse=True)
+def collect_garbage(request):
+    """Free each Qt test's leftover widgets before the next test starts.
+
+    Left to the cyclic collector, a shut-down player can be freed in the
+    middle of another player starting mpv, which crashes the run.
+    """
+    yield
+    if "app" in request.fixturenames:
+        gc.collect()
 
 
 @pytest.fixture(autouse=True)
