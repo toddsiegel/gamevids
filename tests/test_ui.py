@@ -1,6 +1,7 @@
 """The Qt app, run headless. Tests that need libmpv skip when it isn't installed."""
 
 import os
+import threading
 import time
 from contextlib import closing
 from dataclasses import replace
@@ -17,6 +18,7 @@ from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from gamevids import db  # noqa: E402
+from gamevids.export import ExportError  # noqa: E402
 from gamevids.games import add_game, game_contents, list_games, load_game  # noqa: E402
 from gamevids.grouping import group_files  # noqa: E402
 from gamevids.probe import ProbeError  # noqa: E402
@@ -252,31 +254,58 @@ def test_the_delete_dialog_lists_what_goes_and_defaults_to_cancel(window_class, 
         assert default_is_cancel
 
 
-def test_export_in_the_game_menu_follows_the_kept_clips(window_class, library, tmp_path):
+def test_export_lives_in_the_game_menu_and_status_bar(window_class, library, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
     from test_ui_triage import add_game_with_clips
+
+    from gamevids.triage import load_triage, save_triage
+
+    release = threading.Event()
+
+    def waiting(*args, progress, **_):
+        progress(5.0, 10.0)
+        release.wait(5)
+        raise ExportError("disk full")
 
     with closing(db.connect(library)) as conn:
         game = add_game_with_clips(conn, tmp_path)
+        for clip in load_triage(conn, game).clips:
+            save_triage(conn, replace(clip, status="kept"))
         window = window_class(conn)
+        assert [window.pages.tabText(i) for i in range(window.pages.count())] == [
+            "Watch",
+            "D-Zones",
+            "Periods",
+            "Triage",
+        ]
         menu = window.menuBar().actions()[0].menu()
-        export = window.export.export_action
-        assert export in menu.actions() and export.shortcut().toString() == "Ctrl+E"
-        assert not export.isEnabled()  # nothing picked yet
+        export, stop = window.export.export_action, window.export.stop_action
+        assert export in menu.actions() and stop in menu.actions()
+        assert export.shortcut().toString() == "Ctrl+E"
+        assert not export.isEnabled() and not stop.isEnabled()  # nothing picked yet
+        assert window.export_status.isHidden()
 
         window.games.setCurrentRow(0)
-        assert not export.isEnabled()  # nothing kept
-        window.pages.setCurrentWidget(window.triage)
-        window.triage.keep()  # on the Triage tab, without visiting Export
         assert export.isEnabled()
-        window.triage.undo()
-        assert not export.isEnabled()
-
-        window.triage.keep()
-        window.export.export = lambda *args, progress, **_: time.sleep(0.2)
-        window.export.ask_path = lambda default: tmp_path / "out.mp4"
+        window.export.export = waiting
+        window.export.ask_path = lambda default, title: tmp_path / "out.mp4"
         export.trigger()
         assert window.export.exporting(game.id) and not export.isEnabled()  # one at a time
-        window.export.shutdown()
+        assert stop.isEnabled()
+
+        warnings = []
+        monkeypatch.setattr(QMessageBox, "warning", lambda *args: warnings.append(args[1:3]))
+        deadline = time.monotonic() + 5
+        while window.export_bar.value() != 500 and time.monotonic() < deadline:
+            QApplication.processEvents()
+        assert not window.export_status.isHidden()
+        assert window.export_label.text().startswith("Exporting vs Lafayette: 0:00:05 of 0:00:10")
+
+        release.set()
+        window.export.thread.wait()
+        QApplication.processEvents()
+        assert window.export_status.isHidden()
+        assert warnings == [("Export Failed", "Couldn't export vs Lafayette: disk full")]
 
 
 def test_exports_in_the_game_menu_lists_the_picked_games_videos(
@@ -322,7 +351,8 @@ def test_deleting_a_game_stops_its_scans_and_export(window_class, library, tmp_p
             camera_id = game.camera_ids[label]
             window.scans.add(ScanJob(camera_id, game.id, game.title, game.camera(label), ()))
         window.export.export = endless
-        window.export.ask_path = lambda default: tmp_path / "out.mp4"
+        window.export.ask_path = lambda default, title: tmp_path / "out.mp4"
+        window.export.confirm_undecided = lambda text: True
         window.export.start()
         assert window.scans.busy and window.export.busy
         asked = []

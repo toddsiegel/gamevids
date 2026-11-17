@@ -11,7 +11,7 @@ page opens at the first clip still undecided.
 import sqlite3
 from datetime import datetime, timedelta
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QFontDatabase, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -62,8 +62,6 @@ def seconds(value: float) -> str:
 
 
 class TriagePage(QWidget):
-    changed = Signal()  # a clip's decision or trim was saved, or undone
-
     def __init__(self, conn: sqlite3.Connection, parent=None):
         super().__init__(parent)
         self.conn = conn
@@ -249,7 +247,6 @@ class TriagePage(QWidget):
             return
         self.message.clear()
         self._fill_row(index)
-        self.changed.emit()
         if move:
             self._go()
         else:
@@ -277,7 +274,6 @@ class TriagePage(QWidget):
         self.triage.clear_all()
         self.message.setText("Cleared every clip’s status. U undoes it.")
         self._fill_table()
-        self.changed.emit()
         self._go(play=False)
 
     def confirm_clear_all(self, decided: int) -> bool:
@@ -313,7 +309,6 @@ class TriagePage(QWidget):
             self.message.setText("Nothing to undo.")
             return
         self._fill_table()  # undoing a Clear All puts back every row
-        self.changed.emit()
         moved = self.triage.index != before
         self.message.setText("Undone.")
         if moved:

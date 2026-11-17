@@ -6,14 +6,17 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
+    QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QSplitter,
     QTabWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -29,7 +32,7 @@ from gamevids.games import (
 )
 from gamevids.report import hms, removal_items, removal_note
 from gamevids_ui.add_game import AddGameDialog
-from gamevids_ui.export_page import ExportPage
+from gamevids_ui.export_runner import ExportRunner
 from gamevids_ui.exports_dialog import ExportsDialog
 from gamevids_ui.periods_page import PeriodsPage
 from gamevids_ui.player import Player
@@ -87,11 +90,11 @@ class MainWindow(QMainWindow):
         self.zones = ZonesPage(conn, self.scans)
         self.periods = PeriodsPage(conn, self.scans, settings=config.periods)
         self.triage = TriagePage(conn)
-        self.export = ExportPage(conn)
-        self.triage.changed.connect(self.export.refresh)  # keeps Export… enabled rightly
+        self.export = ExportRunner(conn, self)
         game_menu = self.menuBar().addMenu("&Game")
         game_menu.addAction(self.add_action)
         game_menu.addAction(self.export.export_action)
+        game_menu.addAction(self.export.stop_action)
         game_menu.addAction(self.exports_action)
         game_menu.addSeparator()
         game_menu.addAction(self.delete_action)
@@ -104,7 +107,6 @@ class MainWindow(QMainWindow):
         self.pages.addTab(self.zones, "D-Zones")
         self.pages.addTab(self.periods, "Periods")
         self.pages.addTab(self.triage, "Triage")
-        self.pages.addTab(self.export, "Export")
         self.pages.currentChanged.connect(self._page_picked)
         for index in range(self.pages.count()):
             action = QAction(self)
@@ -123,6 +125,26 @@ class MainWindow(QMainWindow):
         self.statusBar().addPermanentWidget(self.scan_status)
         self.scans.changed.connect(self._show_scan_status)
         self.scans.finished.connect(self._scan_finished)
+
+        # A running export shows here, with its Stop button, beside any scan.
+        self.export_status = QWidget()
+        row = QHBoxLayout(self.export_status)
+        row.setContentsMargins(0, 0, 0, 0)
+        self.export_label = QLabel()
+        self.export_bar = QProgressBar()
+        self.export_bar.setRange(0, 1000)
+        self.export_bar.setTextVisible(False)
+        self.export_bar.setMaximumWidth(160)
+        stop = QToolButton()
+        stop.setDefaultAction(self.export.stop_action)
+        stop.setText("Stop")
+        row.addWidget(self.export_label)
+        row.addWidget(self.export_bar)
+        row.addWidget(stop)
+        self.statusBar().addPermanentWidget(self.export_status)
+        self.export.changed.connect(self._show_export_status)
+        self.export.ended.connect(self._export_ended)
+        self._show_export_status()
         self.reload_games()
 
     def reload_games(self, select: int | None = None) -> None:
@@ -204,7 +226,7 @@ class MainWindow(QMainWindow):
         self.zones.clear()
         self.periods.clear(message)
         self.triage.clear(message)
-        self.export.clear(message)
+        self.export.set_game(None)
 
     def _game_picked(self, item: QListWidgetItem | None, _previous=None) -> None:
         self.delete_action.setEnabled(item is not None)
@@ -237,8 +259,6 @@ class MainWindow(QMainWindow):
         elif page is self.triage:
             self.triage.refresh()  # the periods may have changed which clips are ours
             self.triage.player.video.setFocus()
-        elif page is self.export:
-            self.export.refresh()  # triage may have kept or discarded clips
 
     def _show_scan_status(self, _camera_id: int = 0) -> None:
         job = self.scans.running
@@ -250,6 +270,18 @@ class MainWindow(QMainWindow):
         self.scan_status.setText(
             f"Scanning {job.game_title}, camera {job.label}: {job.fraction:.0%}{more}"
         )
+
+    def _show_export_status(self) -> None:
+        status = self.export.status
+        self.export_status.setVisible(bool(status))
+        self.export_label.setText(status)
+        self.export_bar.setValue(round(self.export.fraction * 1000))
+
+    def _export_ended(self, message: str, failed: bool) -> None:
+        if failed:
+            QMessageBox.warning(self, "Export Failed", message)
+        else:
+            self.statusBar().showMessage(message, 15_000)
 
     def _scan_finished(self, camera_id: int) -> None:
         result = self.scans.results.get(camera_id)
