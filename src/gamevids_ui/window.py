@@ -4,7 +4,7 @@ import sqlite3
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QCloseEvent, QKeySequence, QShortcut
+from PySide6.QtGui import QAction, QCloseEvent, QKeySequence, QPalette, QShortcut
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -135,6 +135,12 @@ class MainWindow(QMainWindow):
         self.export_bar.setRange(0, 1000)
         self.export_bar.setTextVisible(False)
         self.export_bar.setMaximumWidth(160)
+        # Fusion fills the bar's groove with Base, the status bar's own color in
+        # a dark palette; a lighter groove shows how much is left.
+        palette = self.export_bar.palette()
+        base = palette.color(QPalette.ColorRole.Base)
+        palette.setColor(QPalette.ColorRole.Base, base.lighter(140))
+        self.export_bar.setPalette(palette)
         stop = QToolButton()
         stop.setDefaultAction(self.export.stop_action)
         stop.setText("Stop")
