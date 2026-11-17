@@ -39,7 +39,7 @@ SHUTTLE_BACK = 2.0  # seconds J jumps back
 SEEK_JUMP = 1.0  # seconds; playback moving further than this between polls was a seek
 
 HELP = (
-    "Enter keep · X discard · Backspace clear · S star · U undo · "
+    "Enter keep · X discard · Backspace clear · S star · U undo · ↑/↓ previous/next clip · "
     "I / O set start / end at the playhead · "
     "Space play/pause · J back 2 s · K pause · L play/faster · ←/→ one frame · [ / ] speed"
 )
@@ -145,6 +145,8 @@ class TriagePage(QWidget):
             (("L",), self.shuttle_forward),
             (("Right",), self.step_forward),
             (("Left",), self.step_back),
+            (("Up",), lambda: self.move(-1)),
+            (("Down",), lambda: self.move(1)),
             (("[",), lambda: self.change_speed(-1)),
             (("]",), lambda: self.change_speed(1)),
         ]:
@@ -214,6 +216,18 @@ class TriagePage(QWidget):
             else:
                 self.player.pause()
         self._show()
+
+    def move(self, step: int) -> None:
+        """Go `step` clips up or down the list, stopping at either end.
+
+        Up from the summary after the last clip goes back to the last clip.
+        """
+        if self.triage is None or not self.triage.clips:
+            return
+        last = len(self.triage.clips) - 1
+        if self.triage.index > last and step > 0:
+            return  # already past the last clip
+        self.table.selectRow(min(max(self.triage.index + step, 0), last))  # → _row_picked
 
     def _row_picked(self) -> None:
         rows = self.table.selectionModel().selectedRows()

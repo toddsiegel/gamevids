@@ -158,6 +158,33 @@ def test_keys_decide_and_triage_resumes_where_it_stopped(make_page, conn, tmp_pa
     assert statuses(conn, game)[2] == ("candidate", False)
 
 
+def test_up_and_down_move_between_clips(make_page, conn, tmp_path):
+    page = make_page()
+    game = add_game_with_clips(conn, tmp_path)
+    page.set_game(game)
+    page.show()
+    page.activateWindow()
+    assert QTest.qWaitForWindowActive(page)  # shortcuts only fire in the active window
+
+    QTest.keyClick(page, Qt.Key.Key_Up)  # at the first clip: stays
+    assert page.triage.index == 0
+    QTest.keyClick(page, Qt.Key.Key_Down)
+    assert page.triage.index == 1
+    assert page.player.label == "B"
+    assert page.table.selectedIndexes()[0].row() == 1
+    QTest.keyClick(page, Qt.Key.Key_Down)
+    QTest.keyClick(page, Qt.Key.Key_Down)  # at the last clip: stays
+    assert page.triage.index == 2
+
+    page.keep()  # past the last clip, to the summary
+    assert page.clip is None
+    QTest.keyClick(page, Qt.Key.Key_Down)
+    assert page.clip is None
+    QTest.keyClick(page, Qt.Key.Key_Up)
+    assert page.triage.index == 2
+    assert statuses(conn, game) == [("candidate", False), ("candidate", False), ("kept", False)]
+
+
 def test_clearing_a_status_and_all_of_them(make_page, conn, tmp_path):
     page = make_page()
     game = add_game_with_clips(conn, tmp_path)

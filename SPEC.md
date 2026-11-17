@@ -49,6 +49,7 @@ A desktop app for turning full-game footage of a hockey goalie into short, watch
 | Space | Play / pause |
 | J / K / L | Jump back 2 s / pause / play (again: faster) |
 | ← / → | Step one frame |
+| ↑ / ↓ | Previous / next clip |
 | I / O | Set in / out point |
 | Enter | Keep and go to next |
 | X | Discard and go to next |
